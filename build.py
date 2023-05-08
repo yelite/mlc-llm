@@ -173,6 +173,7 @@ def debug_dump_script(mod, name, args):
         return
     dump_path = os.path.join(args.artifact_path, "debug", name)
     with open(dump_path, "w") as outfile:
+        # Remove runtime modules from external codegen so that the IR module can be printed.
         mod = mod.without_attr("external_mods").without_attr("const_name_to_constant")
         outfile.write(mod.script(show_meta=True))
     print(f"Dump mod to {dump_path}")

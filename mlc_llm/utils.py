@@ -85,6 +85,7 @@ def split_transform_deploy_mod(
     )
     mod_deploy = relax.transform.DeadCodeElimination(model_names)(mod_deploy)
 
+    # Copy the runtime module from external codegen
     mod_deploy = mod_deploy.with_attrs(
         {
             "external_mods": mod.get_attr("external_mods"),
