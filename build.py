@@ -222,7 +222,7 @@ def offload_for_cuda(args, mod):
 
     codegen_pass = relax.transform.RunCodegen(
         {"cutlass": {"sm": 80, "find_first_valid": False}},
-        entry_functions=["encoding", "decoding"],
+        entry_functions=["encoding", "decoding", "create_kv_cache"],
     )
     mod = codegen_pass(mod)
     debug_dump_script(mod, "mod_after_external_codegen.py", args)
