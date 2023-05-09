@@ -26,7 +26,9 @@ def _parse_args():
         "--quantization-storage-nbit", type=int, choices=[32, 16], default=32
     )
     args.add_argument("--no-quantize", action="store_true", default=False)
-    args.add_argument("--cutlass-offload", action="store_true", default=False)
+    cuda_offload = args.add_mutually_exclusive_group()
+    cuda_offload.add_argument("--cutlass-offload", action="store_true", default=False)
+    cuda_offload.add_argument("--cublas-offload", action="store_true", default=False)
     args.add_argument("--max-seq-len", type=int, default=-1)
     args.add_argument("--target", type=str, default="auto")
     args.add_argument("--db-path", type=str, default="log_db/")
@@ -204,6 +206,30 @@ def debug_dump_shader(ex, name, args):
     print(f"Dump shader to {dump_path}")
 
 
+def offload_for_cuda(args, mod):
+    debug_dump_script(mod, "mod_before_external_offload.py", args)
+
+    if args.cutlass_offload:
+        from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
+
+        mod = partition_for_cutlass(mod)
+        debug_dump_script(mod, "mod_after_cutlass_partition.py", args)
+    elif args.cublas_offload:
+        from tvm.relax.backend.contrib.cublas import partition_for_cublas
+
+        mod = partition_for_cublas(mod)
+        debug_dump_script(mod, "mod_after_cublas_partition.py", args)
+
+    codegen_pass = relax.transform.RunCodegen(
+        {"cutlass": {"sm": 80, "find_first_valid": False}},
+        entry_functions=["encoding", "decoding"],
+    )
+    mod = codegen_pass(mod)
+    debug_dump_script(mod, "mod_after_external_codegen.py", args)
+
+    return mod
+
+
 def mod_transform_before_build(
     mod: tvm.IRModule,
     model_params: List[tvm.nd.NDArray],
@@ -220,18 +246,8 @@ def mod_transform_before_build(
             storage_nbit=args.quantization_storage_nbit,
             dtype=args.dtype,
         )(mod)
-    if args.target_kind == "cuda" and args.cutlass_offload:
-        from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
-
-        debug_dump_script(mod, "mod_before_cutlass.py", args)
-        mod = partition_for_cutlass(mod)
-        debug_dump_script(mod, "mod_after_cutlass_partition.py", args)
-        codegen_pass = relax.transform.RunCodegen(
-            {"cutlass": {"sm": 80, "find_first_valid": False}},
-            entry_functions=model_names,
-        )
-        mod = codegen_pass(mod)
-        debug_dump_script(mod, "mod_after_cutlass_codegen.py", args)
+    if args.target_kind == "cuda":
+        mod = offload_for_cuda(args, mod)
 
     mod = mlc_llm.transform.FuseTransposeMatmul()(mod)
 
