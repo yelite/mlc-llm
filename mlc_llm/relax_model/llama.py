@@ -304,8 +304,23 @@ class LlamaAttention(nn.Module):
             (bsz, tvm.tir.IntImm("int64", 1), q_len, kv_seq_len),
         )
         
-        attn_weights = nn.emit(relax.op.add(attn_weights, attention_mask))
+        attn_weights = nn.emit(
+            maximum(
+                attn_weights,
+                relax.const(
+                    tvm.tir.min_value(attn_weights.struct_info.dtype).value,
+                    attn_weights.struct_info.dtype,
+                ),
+            )
+        )
+        attn_weights = nn.emit(relax.op.minimum(attn_weights, attention_mask))
+
+        # upcast attention to fp32
+        if attn_weights.struct_info.dtype != "float32":
+            attn_weights = astype(attn_weights, "float32")
         attn_weights = nn.emit(softmax(attn_weights, axis=-1))
+        if attn_weights.struct_info.dtype != query_states.struct_info.dtype:
+            attn_weights = astype(attn_weights, query_states.struct_info.dtype)
         attn_output = nn.emit(matmul(attn_weights, value_states))
 
         tvm.ir.assert_structural_equal(
