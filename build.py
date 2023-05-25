@@ -229,11 +229,18 @@ def cuda_offload(mod, args):
     import tvm.relax.backend.contrib.cublas
     import tvm.relax.backend.contrib.cutlass
     from tvm.relax.backend import get_patterns_with_prefix
+    from mlc_llm.transform import rewrite_attention
 
     debug_dump_script(mod, "mod_before_cuda_offload.py", args)
 
+    mod["prefill"] = rewrite_attention(mod["prefill"])
+    mod["decode"] = rewrite_attention(mod["decode"])
+
     patterns_to_use = []
 
+    if args.cutlass_offload:
+        # Use cutlass attention before cublas
+        patterns_to_use += get_patterns_with_prefix("cutlass.attention")
     if args.cublas_offload:
         patterns_to_use += get_patterns_with_prefix("cublas")
     if args.cutlass_offload:
