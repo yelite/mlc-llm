@@ -234,13 +234,28 @@ def debug_dump_shader(ex, name, args):
 
 def cuda_offload(mod, args):
     import tvm.relax.backend.contrib.cublas
-    import tvm.relax.backend.contrib.cutlass
+    import tvm.contrib.cutlass
     from tvm.relax.backend import get_patterns_with_prefix
+    from tvm.relax.backend.contrib.cutlass import annotate_workspace
+
+    from mlc_llm.transform import combine_parallel_transposed_matmul, rewrite_attention
 
     debug_dump_script(mod, "mod_before_cuda_offload.py", args)
 
+    mod["prefill"] = rewrite_attention(mod["prefill"])
+    mod["decode"] = rewrite_attention(mod["decode"])
+    mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 3)
+    mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 2)
+    mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 3)
+    mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 2)
+
+    debug_dump_script(mod, "mod_after_cuda_rewrite.py", args)
+
     patterns_to_use = []
 
+    if args.cutlass_offload:
+        # Use cutlass attention before cublas
+        patterns_to_use += get_patterns_with_prefix("cutlass.attention")
     if args.cublas_offload:
         patterns_to_use += get_patterns_with_prefix("cublas")
     if args.cutlass_offload:
@@ -252,11 +267,19 @@ def cuda_offload(mod, args):
         annotate_codegen=True,
     )
     mod = partition_pass(mod)
+    mod = annotate_workspace(mod)
+    mod = relax.transform.AllocateWorkspace()(mod)
     debug_dump_script(mod, "mod_after_cuda_partition.py", args)
 
     codegen_pass = relax.transform.RunCodegen(
         {"cutlass": {"sm": 80, "find_first_valid": False}},
-        entry_functions=["prefill", "decode", "create_kv_cache", "softmax_with_temperature", "get_metadata"],
+        entry_functions=[
+            "prefill",
+            "decode",
+            "create_kv_cache",
+            "softmax_with_temperature",
+            "get_metadata",
+        ],
     )
     mod = codegen_pass(mod)
     debug_dump_script(mod, "mod_after_cuda_codegen.py", args)
