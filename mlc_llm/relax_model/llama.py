@@ -402,7 +402,7 @@ def _make_causal_mask(input_ids_shape, dtype, src_len):
         return te.compute(
             (tgt_len, tgt_len),
             lambda i, j: tvm.tir.Select(
-                j > i, tvm.tir.min_value(dtype), tvm.tir.FloatImm(dtype, 0)
+                j > i, tvm.tir.min_value(dtype), tvm.tir.max_value(dtype)
             ),
             name="make_diag_mask_te",
         )
@@ -416,7 +416,9 @@ def _make_causal_mask(input_ids_shape, dtype, src_len):
         return te.compute(
             (bsz, 1, tgt_len, src_len),
             lambda b, _, i, j: te.if_then_else(
-                j < src_len - tgt_len, tvm.tir.FloatImm(dtype, 0), x[b, _, i, j - (src_len - tgt_len)]
+                j < src_len - tgt_len,
+                tvm.tir.max_value(dtype),
+                x[b, _, i, j - (src_len - tgt_len)],
             ),
             name="concat_te",
         )
@@ -449,7 +451,13 @@ class LlamaModel(nn.Module):
             # Get src_len from input parameters
             # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
             bsz, tgt_len = input_shape
-            combined_attention_mask = nn.emit(relax.op.full((bsz, 1, tgt_len, src_len), relax.const(0, dtype), dtype))
+            combined_attention_mask = nn.emit(
+                relax.op.full(
+                    (bsz, 1, tgt_len, src_len),
+                    relax.const(tvm.tir.max_value(dtype).value, dtype),
+                    dtype,
+                )
+            )
         return combined_attention_mask
 
     def forward(
