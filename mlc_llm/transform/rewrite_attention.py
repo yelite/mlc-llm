@@ -27,5 +27,4 @@ def rewrite_attention(f):
             matchings[Q], matchings[K], matchings[V], causal_mask="BottomRight"
         )
 
-    print(f)
     return rewrite_call(pattern, callback, f)
