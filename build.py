@@ -236,10 +236,10 @@ def cuda_offload(mod, args):
 
     mod["prefill"] = rewrite_attention(mod["prefill"])
     mod["decode"] = rewrite_attention(mod["decode"])
-    mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 2)
     mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 3)
-    mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 2)
+    mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 2)
     mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 3)
+    mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 2)
 
     debug_dump_script(mod, "mod_after_cuda_rewrite.py", args)
 
