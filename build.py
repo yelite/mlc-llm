@@ -229,12 +229,19 @@ def cuda_offload(mod, args):
     import tvm.relax.backend.contrib.cublas
     import tvm.relax.backend.contrib.cutlass
     from tvm.relax.backend import get_patterns_with_prefix
-    from mlc_llm.transform import rewrite_attention
+
+    from mlc_llm.transform import combine_parallel_transposed_matmul, rewrite_attention
 
     debug_dump_script(mod, "mod_before_cuda_offload.py", args)
 
     mod["prefill"] = rewrite_attention(mod["prefill"])
     mod["decode"] = rewrite_attention(mod["decode"])
+    mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 2)
+    mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 3)
+    mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 2)
+    mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 3)
+
+    debug_dump_script(mod, "mod_after_cuda_rewrite.py", args)
 
     patterns_to_use = []
 
@@ -256,7 +263,13 @@ def cuda_offload(mod, args):
 
     codegen_pass = relax.transform.RunCodegen(
         {"cutlass": {"sm": 80, "find_first_valid": False}},
-        entry_functions=["prefill", "decode", "create_kv_cache", "softmax_with_temperature", "get_metadata"],
+        entry_functions=[
+            "prefill",
+            "decode",
+            "create_kv_cache",
+            "softmax_with_temperature",
+            "get_metadata",
+        ],
     )
     mod = codegen_pass(mod)
     debug_dump_script(mod, "mod_after_cuda_codegen.py", args)
@@ -292,7 +305,9 @@ def mod_transform_before_build(
     mod = mlc_llm.transform.FuseTransposeMatmul()(mod)
     debug_dump_script(mod, "mod_before_pipeline.py", args)
     mod = relax.pipeline.get_pipeline()(mod)
-    mod = mlc_llm.transform.FuseDecodeMatmulEwise(args.quantization.model_dtype, args.target_kind)(mod)
+    mod = mlc_llm.transform.FuseDecodeMatmulEwise(
+        args.quantization.model_dtype, args.target_kind
+    )(mod)
     debug_dump_script(mod, "mod_before_DCE.py", args)
     mod = relax.transform.DeadCodeElimination(model_names)(mod)
     mod = relax.transform.LiftTransformParams()(mod)
