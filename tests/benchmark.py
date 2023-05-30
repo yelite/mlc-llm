@@ -555,8 +555,9 @@ def benchmark(
     # Actual measurement
     elapsed = []
     torch.cuda.cudart().cudaProfilerStart()
-    for i in range(num_measurement):
-        torch.cuda.nvtx.range_push(f"iteration_{i}")
+
+    for _ in range(num_measurement):
+        torch.cuda.nvtx.range_push(f"bench_iteration")
         elapsed.append(
             benchmark_core_chat(model_wrapper, num_input_tokens, num_output_tokens, skip_sampling)
         )
