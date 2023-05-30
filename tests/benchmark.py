@@ -554,12 +554,17 @@ def benchmark(
 
     # Actual measurement
     elapsed = []
-    for _ in range(num_measurement):
+    torch.cuda.cudart().cudaProfilerStart()
+    for i in range(num_measurement):
+        torch.cuda.nvtx.range_push(f"iteration_{i}")
         elapsed.append(
             benchmark_core_chat(model_wrapper, num_input_tokens, num_output_tokens, skip_sampling)
         )
+        torch.cuda.nvtx.range_pop()
     elapsed = [np.percentile(elapsed, p) for p in percentiles]
     tok_per_sec = [num_output_tokens / e for e in elapsed]
+
+    torch.cuda.cudart().cudaProfilerStop()
     return elapsed, tok_per_sec
 
 
