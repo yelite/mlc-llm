@@ -632,14 +632,22 @@ def create_kv_cache_func(bb: relax.BlockBuilder, config: LlamaConfig) -> None:
     with bb.function("create_kv_cache", []):
         with bb.dataflow():
             zeros = bb.emit(relax.op.zeros(init_shape, config.dtype))
+            f_kv_cache_group_create = relax.extern("vm.builtin.attention_kv_cache_group_create")
+            f_kv_cache_group_get = relax.extern("vm.builtin.attention_kv_cache_group_get_cache")
+            group = bb.emit(
+                relax.Call(
+                    f_kv_cache_group_create,
+                    args=[init_shape, zeros, relax.PrimValue(config.num_hidden_layers * 2)],
+                    sinfo_args=[relax.ObjectStructInfo()],
+                )
+            )
             caches = []
-            f_kv_cache_create = relax.extern("vm.builtin.attention_kv_cache_create")
-            for _ in range(config.num_hidden_layers * 2):
+            for i in range(config.num_hidden_layers * 2):
                 caches.append(
                     bb.emit(
                         relax.Call(
-                            f_kv_cache_create,
-                            args=[zeros, init_shape, relax.PrimValue(0)],
+                            f_kv_cache_group_get,
+                            args=[group, relax.PrimValue(i)],
                             sinfo_args=[relax.ObjectStructInfo()],
                         )
                     )

@@ -62,6 +62,8 @@ def _parse_args():
     args.add_argument("--num-input-tokens", type=int, default=32)
     args.add_argument("--num-output-tokens", type=int, default=32)
 
+    args.add_argument("--instrucment-vm", action="store_true", default=False)
+
     parsed = args.parse_args()
     utils.argparse_postproc_common(parsed)
 
@@ -129,6 +131,7 @@ class TvmModelWrapper(ModelWrapper):
         dtype,
         tvm_device,
         torch_device=("cuda" if torch.cuda.is_available() else "cpu"),
+        instrument_vm=False,
     ):
         super().__init__(tokenizer, max_gen_len, conv_template)
 
@@ -144,7 +147,8 @@ class TvmModelWrapper(ModelWrapper):
 
         self.const_params = utils.load_params(artifact_path, self.tvm_device)
         self.vm = tvm.relax.VirtualMachine(tvm_ex, self.tvm_device)
-        self.vm.set_instrument(instrument_nvtx_range)
+        if instrument_vm:
+            self.vm.set_instrument(instrument_nvtx_range)
         self.prep_model()
 
     def sync(self):
@@ -556,6 +560,7 @@ def benchmark(
     num_warm_up,
     num_measurement,
     skip_sampling=False,
+    instrument_vm=False,
     percentiles=[50, 90, 99],
 ):
     # Warm-up
@@ -590,6 +595,7 @@ def get_model_wrapper(mode, tokenizer, ARGS):
             ARGS.quantization.model_dtype,
             tvm_device=ARGS.device_name,
             torch_device="cpu", # TODO: change to "cuda" when dlpack conversion works.
+            instrument_vm=ARGS.instrument_vm,
         )
     elif mode.startswith("torch-"):
         return TorchModelWrapper(
