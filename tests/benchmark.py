@@ -75,9 +75,6 @@ def _parse_args():
 
 
 def instrument_nvtx_range(func, name, before_run, *args):
-    if name.startswith("vm.builtin") and not name.startswith("vm.builtin.attention"):
-        return
-
     if before_run:
         torch.cuda.nvtx.range_push(f"{name}")
     else:
