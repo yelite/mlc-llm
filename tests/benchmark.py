@@ -74,6 +74,13 @@ def _parse_args():
     return parsed
 
 
+def instrument_nvtx_range(func, name, before_run, *args):
+    if before_run:
+        torch.cuda.nvtx.range_push(f"{name}")
+    else:
+        torch.cuda.nvtx.range_pop()
+
+
 class ModelWrapper:
     def __init__(self, tokenizer, max_gen_len: int, conv_template):
         self.name = None
@@ -137,6 +144,7 @@ class TvmModelWrapper(ModelWrapper):
 
         self.const_params = utils.load_params(artifact_path, self.tvm_device)
         self.vm = tvm.relax.VirtualMachine(tvm_ex, self.tvm_device)
+        self.vm.set_instrument(instrument_nvtx_range)
         self.prep_model()
 
     def sync(self):
@@ -159,47 +167,48 @@ class TvmModelWrapper(ModelWrapper):
 
         start_pos = num_input_tokens
         for cur_pos in range(start_pos, total_len):
-            if cur_pos == start_pos:
-                # TODO: switch to the below when Eric's PR is merged.
-                # tok = tvm.nd.from_dlpack(tokens[:, :cur_pos])
-                tok = tvm.nd.array(tokens[:, :cur_pos].numpy(), self.tvm_device)
-                logits = self.model(tok)
-            else:
-                # TODO: switch to the below when Eric's PR is merged.
-                # tok = tvm.nd.from_dlpack(tokens[:, cur_pos - 1 : cur_pos])
-                tok = tvm.nd.array(
-                    tokens[:, cur_pos - 1 : cur_pos].numpy(), self.tvm_device
-                )
-                logits = self.model(tok)
+            with torch.cuda.nvtx.range(f"generate_token_{cur_pos}"):
+                if cur_pos == start_pos:
+                    # TODO: switch to the below when Eric's PR is merged.
+                    # tok = tvm.nd.from_dlpack(tokens[:, :cur_pos])
+                    tok = tvm.nd.array(tokens[:, :cur_pos].numpy(), self.tvm_device)
+                    logits = self.model(tok)
+                else:
+                    # TODO: switch to the below when Eric's PR is merged.
+                    # tok = tvm.nd.from_dlpack(tokens[:, cur_pos - 1 : cur_pos])
+                    tok = tvm.nd.array(
+                        tokens[:, cur_pos - 1 : cur_pos].numpy(), self.tvm_device
+                    )
+                    logits = self.model(tok)
 
-            # NOTE:
-            # There are three methods to work with torch ops.
-            # Method 1: tvm GPU -> torch GPU
-            #    logits = torch.from_dlpack(logits)
-            # Method 2: tvm GPU-> tvm CPU -> torch CPU
-            #    logits = tvm.nd.array(logits.numpy(), tvm.cpu())
-            #    logits = torch.from_dlpack(logits)
-            # Method 3: tvm GPU -> numpy CPU -> torch CPU
-            #    logits = torch.from_numpy(logits.numpy())
-            #
-            # For logits of [1,1,32k] = 128KB (our case), conversion on GPU (Method1) takes ~1sec,
-            # which could be non-neglibile for short response.
-            # However, conversion on CPU (Method 2&3) is very cheap even with the data copy from GPU to CPU.
-            # Rather than addressing this issue, we choose Method3 by default for now.
+                # NOTE:
+                # There are three methods to work with torch ops.
+                # Method 1: tvm GPU -> torch GPU
+                #    logits = torch.from_dlpack(logits)
+                # Method 2: tvm GPU-> tvm CPU -> torch CPU
+                #    logits = tvm.nd.array(logits.numpy(), tvm.cpu())
+                #    logits = torch.from_dlpack(logits)
+                # Method 3: tvm GPU -> numpy CPU -> torch CPU
+                #    logits = torch.from_numpy(logits.numpy())
+                #
+                # For logits of [1,1,32k] = 128KB (our case), conversion on GPU (Method1) takes ~1sec,
+                # which could be non-neglibile for short response.
+                # However, conversion on CPU (Method 2&3) is very cheap even with the data copy from GPU to CPU.
+                # Rather than addressing this issue, we choose Method3 by default for now.
 
-            if skip_sampling:
-                continue
+                if skip_sampling:
+                    continue
 
-            if str(self.torch_device) == "cpu":
-                logits = torch.from_numpy(logits.numpy())
-            else:
-                logits = torch.from_dlpack(logits)
+                if str(self.torch_device) == "cpu":
+                    logits = torch.from_numpy(logits.numpy())
+                else:
+                    logits = torch.from_dlpack(logits)
 
-            logits = logits[:, -1, :]
-            # Use greedy
-            next_token = torch.argmax(logits, dim=-1)
-            next_token = next_token.reshape(-1)
-            tokens[:, cur_pos] = next_token
+                logits = logits[:, -1, :]
+                # Use greedy
+                next_token = torch.argmax(logits, dim=-1)
+                next_token = next_token.reshape(-1)
+                tokens[:, cur_pos] = next_token
             
 
     def generate(
@@ -533,7 +542,8 @@ def benchmark_core_chat(model_wrapper, num_input_tokens, num_output_tokens, skip
     model_wrapper.prep_model(num_input_tokens, num_output_tokens)
     model_wrapper.sync()
     t0 = time.time()
-    model_wrapper.benchmark_core(num_input_tokens, num_output_tokens, skip_sampling)
+    with torch.cuda.nvtx.range("model_wrapper.benchmark_core"):
+        model_wrapper.benchmark_core(num_input_tokens, num_output_tokens, skip_sampling)
     model_wrapper.sync()
     t1 = time.time()
     return t1 - t0
@@ -557,11 +567,10 @@ def benchmark(
     torch.cuda.cudart().cudaProfilerStart()
 
     for _ in range(num_measurement):
-        torch.cuda.nvtx.range_push(f"bench_iteration")
-        elapsed.append(
-            benchmark_core_chat(model_wrapper, num_input_tokens, num_output_tokens, skip_sampling)
-        )
-        torch.cuda.nvtx.range_pop()
+        with torch.cuda.nvtx.range("bench_iteration"):
+            elapsed.append(
+                benchmark_core_chat(model_wrapper, num_input_tokens, num_output_tokens, skip_sampling)
+            )
     elapsed = [np.percentile(elapsed, p) for p in percentiles]
     tok_per_sec = [num_output_tokens / e for e in elapsed]
 

@@ -21,18 +21,19 @@ def get_tvm_model(const_params, vm):
             self.kv_cache = vm["create_kv_cache"]()
 
         def forward(self, inputs: tvm.nd.array) -> tvm.nd.array:
-            self.tot_seq_len += inputs.shape[1]
-            seq_len_shape = tvm.runtime.ShapeTuple([self.tot_seq_len])
-            if inputs.shape[1] > 1:
-                logits, kv_cache = vm["prefill"](
-                    inputs, seq_len_shape, self.kv_cache, const_params
-                )
-            else:
-                logits, kv_cache = vm["decode"](
-                    inputs, seq_len_shape, self.kv_cache, const_params
-                )
-            self.kv_cache = kv_cache
-            return logits
+            with torch.cuda.nvtx.range("tvm_model.forward"):
+                self.tot_seq_len += inputs.shape[1]
+                seq_len_shape = tvm.runtime.ShapeTuple([self.tot_seq_len])
+                if inputs.shape[1] > 1:
+                    logits, kv_cache = vm["prefill"](
+                        inputs, seq_len_shape, self.kv_cache, const_params
+                    )
+                else:
+                    logits, kv_cache = vm["decode"](
+                        inputs, seq_len_shape, self.kv_cache, const_params
+                    )
+                self.kv_cache = kv_cache
+                return logits
 
     model = Model()
     return model.forward
