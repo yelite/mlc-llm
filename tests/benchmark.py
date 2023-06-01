@@ -62,7 +62,7 @@ def _parse_args():
     args.add_argument("--num-input-tokens", type=int, default=32)
     args.add_argument("--num-output-tokens", type=int, default=32)
 
-    args.add_argument("--instrucment-vm", action="store_true", default=False)
+    args.add_argument("--instrument-vm", action="store_true", default=False)
 
     parsed = args.parse_args()
     utils.argparse_postproc_common(parsed)
