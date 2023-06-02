@@ -163,26 +163,22 @@ class TvmModelWrapper(ModelWrapper):
 
     def benchmark_core(self, num_input_tokens, num_output_tokens, skip_sampling=False):
         total_len = num_input_tokens + num_output_tokens
-        tokens = (
-            torch.full((1, total_len), self.tokenizer.pad_token_id)
-            .to(torch.int32)
-            .to(self.torch_device)
-        )
+        tokens = torch.full((1, total_len), self.tokenizer.pad_token_id, dtype=torch.int32, device=self.torch_device)
 
         start_pos = num_input_tokens
         for cur_pos in range(start_pos, total_len):
             with torch.cuda.nvtx.range(f"generate_token_{cur_pos}"):
                 if cur_pos == start_pos:
                     # TODO: switch to the below when Eric's PR is merged.
-                    # tok = tvm.nd.from_dlpack(tokens[:, :cur_pos])
-                    tok = tvm.nd.array(tokens[:, :cur_pos].numpy(), self.tvm_device)
+                    tok = tvm.nd.from_dlpack(tokens[:, :cur_pos].contiguous())
+                    # tok = tvm.nd.array(tokens[:, :cur_pos].numpy(), self.tvm_device)
                     logits = self.model(tok)
                 else:
                     # TODO: switch to the below when Eric's PR is merged.
-                    # tok = tvm.nd.from_dlpack(tokens[:, cur_pos - 1 : cur_pos])
-                    tok = tvm.nd.array(
-                        tokens[:, cur_pos - 1 : cur_pos].numpy(), self.tvm_device
-                    )
+                    tok = tvm.nd.from_dlpack(tokens[:, cur_pos - 1 : cur_pos].contiguous())
+                    # tok = tvm.nd.array(
+                    #     tokens[:, cur_pos - 1 : cur_pos].numpy(), self.tvm_device
+                    # )
                     logits = self.model(tok)
 
                 # NOTE:
@@ -334,11 +330,7 @@ class TorchModelWrapper(ModelWrapper):
 
     def benchmark_core(self, num_input_tokens, num_output_tokens, skip_sampling=False):
         total_len = num_input_tokens + num_output_tokens
-        tokens = (
-            torch.full((1, total_len), self.tokenizer.pad_token_id)
-            .to(torch.int32)
-            .to(self.torch_device)
-        )
+        tokens = torch.full((1, total_len), self.tokenizer.pad_token_id, dtype=torch.int32, device=self.torch_device)
         past_key_values = None
         for cur_pos in range(num_input_tokens, total_len):
             if cur_pos == num_input_tokens:
@@ -594,7 +586,7 @@ def get_model_wrapper(mode, tokenizer, ARGS):
             ARGS.quantization.name,
             ARGS.quantization.model_dtype,
             tvm_device=ARGS.device_name,
-            torch_device="cpu", # TODO: change to "cuda" when dlpack conversion works.
+            torch_device="cuda",
             instrument_vm=ARGS.instrument_vm,
         )
     elif mode.startswith("torch-"):
