@@ -303,7 +303,7 @@ class LlamaAttention(nn.Module):
             attention_mask.struct_info.shape.values,
             (bsz, tvm.tir.IntImm("int64", 1), q_len, kv_seq_len),
         )
-        
+
         attn_weights = nn.emit(
             maximum(
                 attn_weights,
@@ -632,18 +632,22 @@ def create_kv_cache_func(bb: relax.BlockBuilder, config: LlamaConfig) -> None:
     with bb.function("create_kv_cache", []):
         with bb.dataflow():
             zeros = bb.emit(relax.op.zeros(init_shape, config.dtype))
-            caches = []
-            f_kv_cache_create = relax.extern("vm.builtin.attention_kv_cache_create")
-            for _ in range(config.num_hidden_layers * 2):
-                caches.append(
-                    bb.emit(
-                        relax.Call(
-                            f_kv_cache_create,
-                            args=[zeros, init_shape, relax.PrimValue(0)],
-                            sinfo_args=[relax.ObjectStructInfo()],
-                        )
-                    )
+            f_kv_cache_create = relax.extern(
+                "vm.builtin.attention_kv_cache_create_multiple"
+            )
+            num_caches = config.num_hidden_layers * 2
+            caches = bb.emit(
+                relax.Call(
+                    f_kv_cache_create,
+                    args=[
+                        zeros,
+                        init_shape,
+                        relax.PrimValue(0),
+                        relax.PrimValue(num_cache),
+                    ],
+                    sinfo_args=[relax.ObjectStructInfo()] * num_cache,
                 )
+            )
             gv = bb.emit_output(caches)
         bb.emit_func_output(gv)
 
