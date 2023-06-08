@@ -643,9 +643,9 @@ def create_kv_cache_func(bb: relax.BlockBuilder, config: LlamaConfig) -> None:
                         zeros,
                         init_shape,
                         relax.PrimValue(0),
-                        relax.PrimValue(num_cache),
+                        relax.PrimValue(num_caches),
                     ],
-                    sinfo_args=[relax.ObjectStructInfo()] * num_cache,
+                    sinfo_args=[relax.ObjectStructInfo()] * num_caches,
                 )
             )
             gv = bb.emit_output(caches)
