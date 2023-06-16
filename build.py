@@ -236,14 +236,18 @@ def cuda_offload(mod, args):
     import tvm.relax.backend.contrib.cublas
     import tvm.contrib.cutlass
     from tvm.relax.backend import get_patterns_with_prefix
-    from tvm.relax.backend.contrib.cutlass import annotate_workspace
+    from tvm.relax.backend.contrib.cutlass import annotate_workspace, attention_rewrite_patterns
+    from tvm.relax.dpl import rewrite_call 
 
-    from mlc_llm.transform import combine_parallel_transposed_matmul, rewrite_attention
+    from mlc_llm.transform import combine_parallel_transposed_matmul 
 
     debug_dump_script(mod, "mod_before_cuda_offload.py", args)
 
-    mod["prefill"] = rewrite_attention(mod["prefill"])
-    mod["decode"] = rewrite_attention(mod["decode"])
+    rewrite_patterns = [*attention_rewrite_patterns()]
+    for pattern, rewriter in rewrite_patterns:
+        mod["prefill"] = rewrite_call(pattern, rewriter, mod["prefill"])
+        mod["decode"] = rewrite_call(pattern, rewriter, mod["decode"])
+
     mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 3)
     mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 2)
     mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 3)
