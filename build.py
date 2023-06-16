@@ -11,8 +11,9 @@ from tvm import relax
 
 import mlc_llm
 from mlc_llm import utils
-from mlc_llm.relax_model import gpt_neox, llama, moss,  rwkv
+from mlc_llm.relax_model import gpt_neox, llama, moss, rwkv
 from mlc_llm.transform import rewrite_attention
+
 
 def _parse_args():
     args = argparse.ArgumentParser()
@@ -233,22 +234,19 @@ def debug_dump_shader(ex, name, args):
 
 
 def cuda_offload(mod, args):
-    import tvm.relax.backend.contrib.cublas
     import tvm.contrib.cutlass
+    import tvm.relax.backend.contrib.cublas
     from tvm.relax.backend import get_patterns_with_prefix
     from tvm.relax.backend.contrib.cutlass import annotate_workspace
+    from tvm.relax.dpl import rewrite_call
 
-    from mlc_llm.transform import combine_parallel_transposed_matmul, rewrite_attention
+    from mlc_llm.transform import combine_parallel_transposed_matmul
 
     debug_dump_script(mod, "mod_before_cuda_offload.py", args)
 
     mod["prefill"] = rewrite_attention(mod["prefill"])
     mod["decode"] = rewrite_attention(mod["decode"])
-    mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 3)
-    mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 2)
-    mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 3)
-    mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 2)
-
+    mod = relax.transform.CombineParallelMatmul()(mod)
     debug_dump_script(mod, "mod_after_cuda_rewrite.py", args)
 
     patterns_to_use = []
@@ -324,7 +322,7 @@ def mod_transform_before_build(
                 storage_nbit=args.quantization.storage_nbit,
                 dtype=args.quantization.model_dtype,
             )(mod)
-    
+
     if args.target_kind == "cuda":
         mod = cuda_offload(mod, args)
     mod = mlc_llm.transform.FuseTransposeMatmul()(mod)  # pylint: disable=not-callable
