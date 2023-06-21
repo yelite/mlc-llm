@@ -386,7 +386,7 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
                         work_dir=work_dir,
                         max_trials_global=2000,
                         max_trials_per_task=50,
-                        op_names=["rms_norm1", "silu", "reshape2", "softmax"]
+                        op_names=["rms_norm1", "silu", "reshape2", "reshape7", "softmax"]
                     )
                 )
             passes.append(relax.transform.MetaScheduleApplyDatabase(work_dir))
@@ -401,7 +401,8 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
 
     debug_dump_script(mod_deploy, "mod_build_stage.py", args)
 
-    ex = relax.build(mod_deploy, args.target, system_lib=args.system_lib)
+    with tvm.transform.PassContext(config={"relax.backend.use_cuda_graph": False}):
+        ex = relax.build(mod_deploy, args.target, system_lib=args.system_lib)
 
     output_filename = (
         f"{args.model}-{args.quantization.name}-{target_kind}.{args.lib_format}"
