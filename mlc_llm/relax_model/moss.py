@@ -1,7 +1,7 @@
 import math
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
-
+import numpy as np
 import tvm
 from tvm import relax, te
 from tvm.relax.op import (
@@ -31,7 +31,7 @@ from .modules import (
     RotaryEmbedding,
     named_parameters,
 )
-
+from .llama import _prepare_decoder_attention_mask
 
 def _min_value(dtype) -> relax.Expr:
     v = tvm.tir.min_value(dtype).value
@@ -251,16 +251,18 @@ class MossAttention(nn.Module):
             )
         )
         # Apply attention mask
-        attn_weights = nn.emit(attn_weights + attention_mask)
+
         attn_weights = nn.emit(
-            minimum(
-                maximum(
-                    attn_weights,
-                    _min_value(attn_weights.struct_info.dtype),
+            maximum(
+                attn_weights,
+                relax.const(
+                    tvm.tir.min_value(attn_weights.struct_info.dtype).value,
+                    attn_weights.struct_info.dtype,
                 ),
-                _max_value(attn_weights.struct_info.dtype),
             )
         )
+        attn_weights = nn.emit(relax.op.minimum(attn_weights, attention_mask))
+
         # Calculate Softmax(QK)
         if attn_weights.struct_info.dtype != "float32":
             attn_weights = astype(attn_weights, "float32")
@@ -328,33 +330,33 @@ class MossLayer(nn.Module):
         return hidden_states, present_key_value
 
 
-def _prepare_decoder_attention_mask(input_shape, src_len, dtype):
-    # create causal mask
-    # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-    if isinstance(input_shape[-1], tvm.tir.Var) or input_shape[-1] > 1:
-        bsz, tgt_len = input_shape
-        mask = full((tgt_len, tgt_len), _min_value(dtype))
-        mask = triu(mask, k=1)
-        diag_mask = nn.emit(broadcast_to(mask, (bsz, 1, tgt_len, tgt_len)))
-        if src_len == tgt_len:
-            return diag_mask
+# def _prepare_decoder_attention_mask(input_shape, src_len, dtype):
+#     # create causal mask
+#     # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+#     if isinstance(input_shape[-1], tvm.tir.Var) or input_shape[-1] > 1:
+#         bsz, tgt_len = input_shape
+#         mask = full((tgt_len, tgt_len), _min_value(dtype))
+#         mask = triu(mask, k=1)
+#         diag_mask = nn.emit(broadcast_to(mask, (bsz, 1, tgt_len, tgt_len)))
+#         if src_len == tgt_len:
+#             return diag_mask
 
-        def extend_te(x, tgt_len, src_len):
-            return te.compute(
-                (bsz, 1, tgt_len, src_len),
-                lambda b, _, i, j: te.if_then_else(
-                    j < src_len - tgt_len, 0, x[b, _, i, j - (src_len - tgt_len)]
-                ),
-                name="concat_te",
-            )
+#         def extend_te(x, tgt_len, src_len):
+#             return te.compute(
+#                 (bsz, 1, tgt_len, src_len),
+#                 lambda b, _, i, j: te.if_then_else(
+#                     j < src_len - tgt_len, 0, x[b, _, i, j - (src_len - tgt_len)]
+#                 ),
+#                 name="concat_te",
+#             )
 
-        return nn.emit_te(extend_te, diag_mask, tgt_len, src_len)
-    else:
-        # Get src_len from input parameters
-        # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-        bsz, tgt_len = input_shape
-        mask = relax.op.zeros((bsz, 1, tgt_len, src_len), dtype)
-    return nn.emit(mask)
+#         return nn.emit_te(extend_te, diag_mask, tgt_len, src_len)
+#     else:
+#         # Get src_len from input parameters
+#         # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+#         bsz, tgt_len = input_shape
+#         mask = relax.op.zeros((bsz, 1, tgt_len, src_len), dtype)
+#     return nn.emit(mask)
 
 
 class MossModel(nn.Module):
@@ -580,15 +582,42 @@ def create_decoding_func(
     gv = mod.get_global_var("decode")
     bb.update_func(gv, mod[gv].with_attr("num_input", 3))
 
+def create_softmax_func(bb: relax.BlockBuilder, config: MossConfig) -> None:
+    with bb.function("softmax_with_temperature"):
+        logits = nn.Placeholder(
+            (1, 1, config.vocab_size), dtype="float32", name="logits"
+        )
+        temperature = nn.Placeholder((), dtype="float32", name="temperature")
+        with bb.dataflow():
+            div = bb.emit(relax.op.divide(logits, temperature))
+            softmax = bb.emit(relax.op.nn.softmax(div, axis=-1))
+            gv = bb.emit_output(softmax)
+        bb.emit_func_output(gv, [logits, temperature])
+
+def adapt_hf_config(hf_config):
+    hf_config["hidden_size"] = hf_config["n_embd"]
+    hf_config["intermediate_size"] = 16384
+    hf_config["num_attention_heads"] = hf_config["n_head"]
+    hf_config["num_hidden_layers"] = hf_config["n_layer"]
+    hf_config["rotary_pct"] = 0.25
+    hf_config["hidden_act"] = hf_config["activation_function"]
+    hf_config["swizzle_style"] = "gptj"
+    # hack to get embedding quantization working
+    # increase vocab_size to multiple of 64
+    hf_config["vocab_size"] = ((hf_config["vocab_size"] + 63) // 64) * 64
+    return hf_config
+
 
 def get_model(args, hf_config):
     from transformers import AutoModelForCausalLM  # type: ignore[import]
 
     model_name = args.model
     model_path = args.model_path
-    dtype = args.quantization.dtype
+    dtype = args.quantization.model_dtype
     max_seq_len = args.max_seq_len
-
+    # The parameter names from MossConfig do not match GPTJ family config.json from HF
+    # This function adapts it. Tested for GPTJ-6B only
+    hf_config = adapt_hf_config(hf_config)
     config = MossConfig(**hf_config, dtype=dtype)
     if max_seq_len != -1:
         config.max_sequence_length = max_seq_len
@@ -600,6 +629,13 @@ def get_model(args, hf_config):
 
     for name, param in hf_model.named_parameters():
         param = param.detach().cpu().numpy()
+        # As we increase vocab_size to be a multiple of 64, pad embedding
+        # and head layer params accordingly
+        if "wte" in name or "lm_head.weight" in name:
+            param = np.pad(param, ((0, config.vocab_size - param.shape[0]), (0,0)), mode='constant')
+        if "lm_head.bias" in name:
+            param = np.pad(param, ((0, config.vocab_size - param.shape[0]),), mode='constant')
+
         if "ln_1" in name or "ln_f" in name:
             param = param.astype("float32")
         else:
@@ -618,10 +654,10 @@ def get_model(args, hf_config):
         else:
             param_list.append((name, param))
 
-        del hf_model
-        param_list = [
-            (name, tvm.nd.array(param, tvm.cpu())) for name, param in param_list
-        ]
+    del hf_model
+    param_list = [
+        (name, tvm.nd.array(param, tvm.cpu())) for name, param in param_list
+    ]
 
     bb = relax.BlockBuilder()
     create_encoding_func(bb, config, param_list)
@@ -634,6 +670,7 @@ def get_model(args, hf_config):
         stop_tokens=[106068],
         add_prefix_space=True,
     )
+    create_softmax_func(bb, config)
     mod = bb.get()
     for gv in mod.functions:
         func = mod[gv]

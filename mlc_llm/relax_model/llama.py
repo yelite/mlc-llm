@@ -428,6 +428,26 @@ def _make_causal_mask(input_ids_shape, dtype, src_len):
     return nn.emit_te(extend_te, diag_mask, tgt_len, src_len)
 
 
+def _prepare_decoder_attention_mask(input_shape, src_len, dtype):
+    # create causal mask
+    # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+    combined_attention_mask = None
+    if isinstance(input_shape[-1], tvm.tir.Var) or input_shape[-1] > 1:
+        combined_attention_mask = _make_causal_mask(input_shape, dtype, src_len)
+    else:
+        # Get src_len from input parameters
+        # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+        bsz, tgt_len = input_shape
+        combined_attention_mask = nn.emit(
+            relax.op.full(
+                (bsz, 1, tgt_len, src_len),
+                relax.const(tvm.tir.max_value(dtype).value, dtype),
+                dtype,
+            )
+        )
+    return combined_attention_mask
+
+
 class LlamaModel(nn.Module):
     def __init__(self, config: LlamaConfig):
         self.padding_idx = config.pad_token_id
@@ -443,25 +463,6 @@ class LlamaModel(nn.Module):
             config.hidden_size, dtype=config.dtype, eps=config.rms_norm_eps
         )
 
-    def _prepare_decoder_attention_mask(self, input_shape, src_len, dtype):
-        # create causal mask
-        # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-        combined_attention_mask = None
-        if isinstance(input_shape[-1], tvm.tir.Var) or input_shape[-1] > 1:
-            combined_attention_mask = _make_causal_mask(input_shape, dtype, src_len)
-        else:
-            # Get src_len from input parameters
-            # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-            bsz, tgt_len = input_shape
-            combined_attention_mask = nn.emit(
-                relax.op.full(
-                    (bsz, 1, tgt_len, src_len),
-                    relax.const(tvm.tir.max_value(dtype).value, dtype),
-                    dtype,
-                )
-            )
-        return combined_attention_mask
-
     def forward(
         self,
         input_ids: relax.Expr,
@@ -475,7 +476,7 @@ class LlamaModel(nn.Module):
         seq_length_with_past = all_seq_len_shape.struct_info.values[0]
         inputs_embeds = self.embed_tokens(input_ids)
         # embed positions
-        attention_mask = self._prepare_decoder_attention_mask(
+        attention_mask = _prepare_decoder_attention_mask(
             (batch_size, seq_length),
             seq_length_with_past,
             inputs_embeds.struct_info.dtype,

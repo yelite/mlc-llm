@@ -288,7 +288,9 @@ def mod_transform_before_build(
 
     use_cutlass = True
 
+    mod = relax.transform.CanonicalizeBindings()(mod)
     mod = relax.transform.CombineParallelMatmul()(mod)
+
     mod = fuse_split_rotary_embedding(mod, config["num_hidden_layers"])
 
     if use_cutlass:
@@ -426,7 +428,7 @@ def main():
     use_cache = ARGS.use_cache and os.path.isfile(cache_path)
     with open(os.path.join(ARGS.model_path, "config.json"), encoding="utf-8") as i_f:
         config = json.load(i_f)
-        if True:
+        if not use_cache:
             if ARGS.model_category == "llama":
                 mod, params = llama.get_model(ARGS, config)
             elif ARGS.model_category == "gpt_neox":
