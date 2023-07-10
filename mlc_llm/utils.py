@@ -108,7 +108,7 @@ def split_transform_deploy_mod(
             mod_deploy[gv] = func
         elif gv.name_hint == transform_func_name:
             mod_transform[gv] = func
-        else:
+        elif "transform_params" not in gv.name_hint: # Hack
             mod_deploy[gv] = func
 
     mod_transform = relax.transform.DeadCodeElimination([transform_func_name])(
