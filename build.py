@@ -294,7 +294,8 @@ def mod_transform_before_build(
     if use_cutlass:
         mod["prefill"] = rewrite_attention(mod["prefill"])
         mod["decode"] = rewrite_attention(mod["decode"])
-        mod = mlc_llm.transform.RowWiseQuantize("float32")(mod)
+        nbit = 4 if args.quantization.mode.endswith("4") else 8
+        mod = mlc_llm.transform.RowWiseQuantize(nbit, "float32")(mod)
     else:
         mod = mlc_llm.transform.GroupQuantize(  # pylint: disable=not-callable
             group_size=40 if args.quantization.mode.endswith("3") else 32,
@@ -401,7 +402,7 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
 
     debug_dump_script(mod_deploy, "mod_build_stage.py", args)
 
-    with tvm.transform.PassContext(config={"relax.backend.use_cuda_graph": False}):
+    with tvm.transform.PassContext(config={"relax.backend.use_cuda_graph": True}):
         ex = relax.build(mod_deploy, args.target, system_lib=args.system_lib)
 
     output_filename = (
