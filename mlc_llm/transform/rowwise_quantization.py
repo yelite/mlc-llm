@@ -28,7 +28,7 @@ def _tir_packed_int_to_int_to_float(storage_nbit: int):
     return f_convert
 
 
-def encoding_func(nbit: int, storage_nbit: int, transpose: bool, dtype: str = "float32"):
+def encoding_func(nbit: int, storage_nbit: int, dtype: str = "float32"):
     def te_encode_sym(weight: te.Tensor):
         n_float_per_int = storage_nbit // nbit
         max_int_value = (1 << (nbit - 1)) - 1
@@ -54,17 +54,11 @@ def encoding_func(nbit: int, storage_nbit: int, transpose: bool, dtype: str = "f
         n_i32 = tir.ceildiv(weight.shape[0], n_float_per_int)
 
         if n_float_per_int == 1:
-            if transpose:
-                w_gathered = te.compute(shape=(weight.shape[1], n_i32), fcompute=lambda j, i: f_scale_weight(i, j), name="w_gathered")
-            else:
-                w_gathered = te.compute(shape=(n_i32, weight.shape[1]), fcompute=lambda i, j: f_scale_weight(i, j), name="w_gathered")
+            w_gathered = te.compute(shape=(weight.shape[1], n_i32), fcompute=lambda j, i: f_scale_weight(i, j), name="w_gathered")
         else:
             k = te.reduce_axis((0, n_float_per_int), name="k")
             reducer = te.comm_reducer(fcombine=lambda x, y: tir.bitwise_or(x, y), fidentity=lambda dtype: tir.const(0, storage_dtype), name="bitwise_or")
-            if transpose:
-                w_gathered = te.compute(shape=(weight.shape[1], n_i32), fcompute=lambda j, i: reducer(tir.if_then_else(i * n_float_per_int + k < weight.shape[0], f_scale_weight(i * n_float_per_int + k, j) << (k.astype(storage_dtype) * tir.const(nbit, storage_dtype)), tir.const(0, storage_dtype)), axis=k), name="w_gathered")
-            else:
-                w_gathered = te.compute(shape=(n_i32, weight.shape[1]), fcompute=lambda i, j: reducer(tir.if_then_else(i * n_float_per_int + k < weight.shape[0], f_scale_weight(i * n_float_per_int + k, j) << (k.astype(storage_dtype) * tir.const(nbit, storage_dtype)), tir.const(0, storage_dtype)), axis=k), name="w_gathered")
+            w_gathered = te.compute(shape=(weight.shape[1], n_i32), fcompute=lambda j, i: reducer(tir.if_then_else(i * n_float_per_int + k < weight.shape[0], f_scale_weight(i * n_float_per_int + k, j) << (k.astype(storage_dtype) * tir.const(nbit, storage_dtype)), tir.const(0, storage_dtype)), axis=k), name="w_gathered")
 
         return w_gathered, topi.cast(scale, "float16")
 
@@ -134,12 +128,11 @@ class RowWiseQuantize:
                     self.builder_.update_func(global_var, updated_func)
                 return self.builder_.get()
 
-            def emit_encoding(self, x: relax.Expr, transpose: bool) -> List[relax.Expr]:
+            def emit_encoding(self, x: relax.Expr) -> List[relax.Expr]:
                 encoded_data = self.builder_.emit_te(
                     encoding_func(
                         self.nbit,
                         self.storage_nbit,
-                        transpose=transpose,
                         dtype=self.dtype,
                     ),
                     x,
@@ -170,7 +163,7 @@ class RowWiseQuantize:
                     return call
 
                 def emit(weight):
-                    decode_args = self.emit_encoding(weight, transpose=True)
+                    decode_args = self.emit_encoding(weight)
 
                     quantized_permute_dims = self.builder_.call_te(
                         decoding_func(
