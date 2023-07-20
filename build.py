@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import tvm
 from tvm import meta_schedule as ms
-from tvm import relax
+from tvm import relax, dlight
 
 import mlc_llm
 from mlc_llm import utils
@@ -393,7 +393,7 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
                     )
                 )
             passes.append(relax.transform.MetaScheduleApplyDatabase(work_dir))
-            passes.append(tvm.tir.transform.DefaultGPUSchedule())
+            passes.append(dlight.ApplyDefaultSchedule(dlight.gpu.Fallback()))
             passes.append(mlc_llm.transform.LiftTIRGlobalBufferAlloc())
             passes.append(tvm.tir.transform.ForceNarrowIndexToInt32())
 
