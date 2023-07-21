@@ -68,6 +68,7 @@ def _parse_args():
         help="/path/to/llvm-mingw-root, use llvm-mingw to cross compile to windows",
     )
     args.add_argument("--system-lib", action="store_true", default=False)
+    args.add_argument("--batch-size", type=int, default=1)
 
     parsed = args.parse_args()
     assert parsed.max_seq_len == -1 or parsed.max_seq_len > 0
