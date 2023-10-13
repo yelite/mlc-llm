@@ -31,6 +31,27 @@ def create_error_response(status_code: HTTPStatus, message: str) -> JSONResponse
 router = APIRouter()
 
 
+def _get_sampling_params(request: ChatCompletionRequest) -> SamplingParams:
+    sampling_params = SamplingParams(
+        n=request.n,
+        # These params came from vllm
+        # TODO(amnalyshe): should they be put into mlc-llm batch serving ChatCompletionRequest?
+        # best_of=request.best_of,
+        # top_k=request.top_k,
+        # ignore_eos=request.ignore_eos,
+        # use_beam_search=request.use_beam_search,
+    )
+    if request.presence_penalty is not None:
+        sampling_params.presence_penalty = request.presence_penalty
+    if request.frequency_penalty is not None:
+        sampling_params.frequency_penalty = request.frequency_penalty
+    if request.temperature is not None:
+        sampling_params.temperature = request.temperature
+    if request.top_p is not None:
+        sampling_params.top_p = request.top_p
+    return sampling_params
+
+
 @router.post("/v1/chat/completions")
 async def request_completion(
     request: ChatCompletionRequest,
@@ -66,19 +87,7 @@ async def request_completion(
         created_time = int(time.time())
         model_name = request.model
         try:
-            sampling_params = SamplingParams(
-                n=request.n,
-                presence_penalty=request.presence_penalty,
-                frequency_penalty=request.frequency_penalty,
-                temperature=request.temperature,
-                top_p=request.top_p,
-                # These params came from vllm
-                # TODO(amnalyshe): should they be put into mlc-llm batch serving ChatCompletionRequest?
-                # best_of=request.best_of,
-                # top_k=request.top_k,
-                # ignore_eos=request.ignore_eos,
-                # use_beam_search=request.use_beam_search,
-            )
+            sampling_params = _get_sampling_params(request)
         except ValueError as e:
             raise ValueError(
                 """
@@ -90,7 +99,7 @@ async def request_completion(
             Request(
                 request_id=request_id,
                 prompt=request.messages,
-                sampling_params=SamplingParams,
+                sampling_params=sampling_params,
                 stopping_criteria=StoppingCriteria(max_tokens=request.max_tokens),
             )
         )
