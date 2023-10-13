@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from mlc_serve.api import APIConfig, create_app
+from mlc_serve.api import create_app
 from mlc_serve.api.protocol import ChatCompletionRequest
 from mlc_serve.engine import AsyncEngineConnector, InferenceEngine
 from mlc_serve.engine.dummy import DummyInferenceEngine
@@ -14,7 +14,7 @@ def engine() -> InferenceEngine:
 @pytest.fixture
 def client(engine):
     connector = AsyncEngineConnector(engine, engine_wait_timeout=0.1)
-    app = create_app(APIConfig(), connector)
+    app = create_app(connector)
     with TestClient(app) as client:
         yield client
 

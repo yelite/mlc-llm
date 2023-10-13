@@ -4,13 +4,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..engine import AsyncEngineConnector
-from .config import APIConfig
 from .handler import router
 
 
-def create_app(
-    config: APIConfig, async_engine_connector: AsyncEngineConnector
-) -> FastAPI:
+def create_app(async_engine_connector: AsyncEngineConnector) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await async_engine_connector.start()
