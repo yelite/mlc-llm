@@ -146,7 +146,7 @@ async def generate_completion_stream(
                         if seq.delta is not None
                         else DeltaMessage()
                     ),
-                    finish_reason=seq.finish_reason,
+                    finish_reason=seq.finish_reason.value if seq.finish_reason is not None else None,
                 )
                 for seq in res.sequences
             ]

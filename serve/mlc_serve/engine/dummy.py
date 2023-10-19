@@ -1,7 +1,14 @@
 from threading import Condition, Lock
 from typing import Dict
 
-from .base import InferenceStepResult, Request, RequestId, RequestOutput, SequenceOutput
+from .base import (
+    FinishReason,
+    InferenceStepResult,
+    Request,
+    RequestId,
+    RequestOutput,
+    SequenceOutput,
+)
 
 
 class DummyInferenceEngine:
@@ -53,7 +60,7 @@ class DummyInferenceEngine:
                             SequenceOutput(
                                 index=0,
                                 delta=" test" if remaining_tokens > 0 else None,
-                                finish_reason="length"
+                                finish_reason=FinishReason.Length
                                 if remaining_tokens == 0
                                 else None,
                             )
