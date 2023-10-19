@@ -8,6 +8,7 @@ from mlc_serve.engine import (
     RequestOutput,
     SamplingParams,
     StoppingCriteria,
+    DebugOptions,
 )
 from mlc_serve.engine.local import LocalProcessInferenceEngine
 from mlc_serve.engine.model_module import (

@@ -8,6 +8,7 @@ from threading import Condition, Lock
 from uuid import uuid4
 
 from .base import (
+    DebugOptions,
     FinishReason,
     InferenceEngine,
     InferenceStepResult,
@@ -30,6 +31,7 @@ class RequestState:
     next_start_position: int
     sampling_params: SamplingParams
     stopping_criteria: StoppingCriteria
+    debug_options: DebugOptions
     is_ended: bool = False
 
 
@@ -159,7 +161,10 @@ class LocalProcessInferenceEngine(InferenceEngine):
             state.next_start_position = len(state.token_ids)
             new_token_ids = res.generated_tokens
             for i, token_id in enumerate(new_token_ids):
-                if token_id == self.tokenizer.eos_token_id:
+                if (
+                    token_id == self.tokenizer.eos_token_id
+                    and not state.debug_options.ignore_eos
+                ):
                     new_token_ids = new_token_ids[:i]
                     state.is_ended = True
             state.token_ids.extend(new_token_ids)
@@ -240,6 +245,7 @@ class LocalProcessInferenceEngine(InferenceEngine):
             next_start_position=0,
             sampling_params=request.sampling_params,
             stopping_criteria=request.stopping_criteria,
+            debug_options=request.debug_options,
             output_text="",
         )
 
