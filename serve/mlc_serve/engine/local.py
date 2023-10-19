@@ -201,7 +201,7 @@ class LocalProcessInferenceEngine(InferenceEngine):
 
             # TODO: make this 15 into config
             # and consider the max cache size of the executor
-            while self.queue and self.cache_manager.get_max_new_tokens() > 15:
+            while self.queue and self.cache_manager.get_max_new_tokens() > 25:
                 state = self.queue[0]
                 num_tokens = len(state.token_ids)
                 if self.cache_manager.get_free_space() <= 1.5 * num_tokens:
@@ -215,7 +215,7 @@ class LocalProcessInferenceEngine(InferenceEngine):
 
     def _should_process_new_request(self):
         return (
-            self.cache_manager.get_free_space() * 1.6
+            self.cache_manager.get_free_space() * 4
             > self.cache_manager.get_kv_cache_size()
         )
 
