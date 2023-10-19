@@ -92,6 +92,7 @@ def run_server():
     app = create_app(connector)
     uvicorn.run(
         app,
+        port=args.port,
         reload=False,
         access_log=False,
     )
