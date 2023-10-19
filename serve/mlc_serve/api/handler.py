@@ -202,8 +202,8 @@ async def collect_result_stream(
 
     usage = UsageInfo(
         prompt_tokens=num_prompt_tokens,
-        completion_tokens=sum(num_generated_tokens.values()),
-        total_tokens=num_prompt_tokens + sum(num_generated_tokens.values()),
+        completion_tokens=sum(num_generated_tokens),
+        total_tokens=num_prompt_tokens + sum(num_generated_tokens),
     )
     response = ChatCompletionResponse(
         id=request_id,
