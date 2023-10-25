@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 from .base import (
     InferenceEngine,
@@ -18,11 +18,15 @@ class TextGenerationError(Exception):
 
 
 class AsyncEngineConnector:
-    def __init__(self, engine: InferenceEngine, engine_wait_timeout=1):
-        self.engine = engine
+    def __init__(
+        self, engine_creator: Callable[[], InferenceEngine], engine_wait_timeout=1
+    ):
+        self.engine = None
+        self.engine_creator = engine_creator
         self.engine_wait_timeout = engine_wait_timeout
         self.engine_loop_task = None
         self.engine_loop_exception = None
+        self.startup_event = asyncio.Event()
         self.shutdown_event = asyncio.Event()
         self.result_queues = dict[RequestId, ResultQueue]()
 
@@ -36,7 +40,13 @@ class AsyncEngineConnector:
         loop = asyncio.get_running_loop()
         should_stop_inference = False
 
+        async def notify_startup():
+            self.startup_event.set()
+
         def inference_loop():
+            self.engine = self.engine_creator()
+            asyncio.run_coroutine_threadsafe(notify_startup(), loop)
+
             while True:
                 self.engine.wait_for_request(timeout_seconds=self.engine_wait_timeout)
                 if should_stop_inference:
@@ -61,12 +71,16 @@ class AsyncEngineConnector:
                 self.shutdown_event.set()
 
         self.engine_loop_task = asyncio.create_task(wait())
+        await self.startup_event.wait()
 
     async def stop(self):
         self.engine_loop_task.cancel()
         await self.engine_loop_task
 
     async def generate(self, request: Request) -> AsyncIterator[RequestOutput]:
+        if self.engine is None:
+            raise RuntimeError("Engine not started.")
+
         try:
             queue = await self._add_request(request)
             while True:

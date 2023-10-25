@@ -72,20 +72,23 @@ def setup_logging(args):
 def run_server():
     args = parse_args()
     setup_logging(args)
-    model_module = PagedCacheModelModule(
-        args.model,
-        args.artifact_path,
-        args.quantization.name,
-        args.num_shards,
-        max_num_batched_tokens=args.max_num_batched_tokens,
-        max_input_len=args.max_input_len,
-    )
 
-    engine = LocalProcessInferenceEngine(
-        model_module,
-        max_batched_tokens=args.max_num_batched_tokens,
-    )
-    connector = AsyncEngineConnector(engine)
+    def create_engine():
+        model_module = PagedCacheModelModule(
+            args.model,
+            args.artifact_path,
+            args.quantization.name,
+            args.num_shards,
+            max_num_batched_tokens=args.max_num_batched_tokens,
+            max_input_len=args.max_input_len,
+        )
+
+        return LocalProcessInferenceEngine(
+            model_module,
+            max_batched_tokens=args.max_num_batched_tokens,
+        )
+
+    connector = AsyncEngineConnector(create_engine)
     app = create_app(connector)
     uvicorn.run(
         app,

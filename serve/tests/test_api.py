@@ -4,18 +4,13 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx_sse import connect_sse
 from mlc_serve.api import create_app
-from mlc_serve.engine import AsyncEngineConnector, InferenceEngine
+from mlc_serve.engine import AsyncEngineConnector
 from mlc_serve.engine.dummy import DummyInferenceEngine
 
 
 @pytest.fixture
-def engine() -> InferenceEngine:
-    return DummyInferenceEngine()
-
-
-@pytest.fixture
-def client(engine):
-    connector = AsyncEngineConnector(engine, engine_wait_timeout=0.1)
+def client():
+    connector = AsyncEngineConnector(DummyInferenceEngine, engine_wait_timeout=0.1)
     app = create_app(connector)
     with TestClient(app) as client:
         yield client
@@ -59,4 +54,3 @@ def test_stream_chat_completion(client):
     assert events[-1]["choices"][0]["finish_reason"] == "length"
 
     assert data[-1] == "[DONE]"
-    
