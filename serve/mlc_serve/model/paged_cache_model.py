@@ -547,6 +547,7 @@ class Model:
         kv_cache = cache.cache
 
         if is_prefill:
+            print("prefill")
             torch.cuda.nvtx.range_push(f"forward prefill {input_shape}")
 
             if self.sliding_window:
@@ -576,6 +577,7 @@ class Model:
                     0
                 ]  # Ignore returned KV cache since it is updated in-place anyway.
         else:
+            print("decode")
             torch.cuda.nvtx.range_push(f"forward decode {input_shape}")
 
             if self.disco_session:
