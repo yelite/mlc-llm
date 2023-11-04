@@ -151,7 +151,7 @@ class LocalProcessInferenceEngine(InferenceEngine):
 
         requests = self._get_requests_to_process()
         results = self.text_generator.generate(requests, self.cache_manager.get_cache())
-        logger.debug("Finished text generation")
+        logger.debug("Finished text generation.")
 
         for res in results:
             # For now we only support single sequence per request
@@ -262,6 +262,8 @@ class LocalProcessInferenceEngine(InferenceEngine):
 
     def _get_requests_to_process(self):
         requests = []
+        # TODO: consider having hybrid batch if the underlying attention kernel supports
+        # mixing prefill and decode.
         is_prompt_batch = any(
             state.next_start_position == 0 for state in self.current_batch.values()
         )
@@ -277,7 +279,11 @@ class LocalProcessInferenceEngine(InferenceEngine):
                             sampling_params=state.sampling_params,
                         )
                     )
-            logger.debug("Creating prompt batch with %s requests.", len(requests))
+            logger.debug(
+                "Creating prompt batch with %s requests with %s total tokens.",
+                len(requests),
+                sum(len(r.token_ids) for r in requests),
+            )
         else:
             for state in self.current_batch.values():
                 seq_id = SequenceId(state.request_id, 0)
