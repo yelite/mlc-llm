@@ -43,8 +43,9 @@ class LocalProcessInferenceEngine(InferenceEngine):
         self,
         model_module: ModelModule,
         max_batched_tokens: int = 2560,
-        min_decode_steps: int = 512,
-        prompt_allocate_ratio: float = 2.5,
+        min_decode_steps: int = 100,
+        max_decode_steps: int = 300,
+        prompt_allocate_ratio: float = 2.0,
     ):
         self.text_generator = model_module.text_generator
         self.tokenizer = model_module.tokenizer
@@ -52,9 +53,10 @@ class LocalProcessInferenceEngine(InferenceEngine):
         self.cache_manager = model_module.cache_manager
 
         self.max_batched_tokens = max_batched_tokens
-        self.min_decode_steps = min(
-            self.cache_manager.get_kv_cache_size(), min_decode_steps
+        self.max_decode_steps = min(
+            self.cache_manager.get_kv_cache_size(), max_decode_steps
         )
+        self.min_decode_steps = min(self.max_decode_steps - 1, min_decode_steps)
         self.prompt_allocate_ratio = prompt_allocate_ratio
         assert prompt_allocate_ratio >= 1.0
 
@@ -223,6 +225,13 @@ class LocalProcessInferenceEngine(InferenceEngine):
                 self.queue.appendleft(request_to_remove)
 
             self._discard_cancelled_requests_from_queue()
+
+            if self.cache_manager.get_max_new_tokens() <= self.max_decode_steps:
+                logger.debug(
+                    "Skip growing the batch due to max_decode_steps. Decode steps: %s",
+                    self.cache_manager.get_max_new_tokens(),
+                )
+                return
 
             num_new_batched_tokens = len(self.current_batch)
             while self.queue:
