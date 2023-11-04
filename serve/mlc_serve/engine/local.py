@@ -143,7 +143,7 @@ class LocalProcessInferenceEngine(InferenceEngine):
         if not self.current_batch:
             return result
 
-        requests = self._get_requests()
+        requests = self._get_requests_to_process()
         logger.debug("Generate text with batch size %s", len(requests))
         results = self.text_generator.generate(requests, self.cache_manager.get_cache())
 
@@ -248,19 +248,25 @@ class LocalProcessInferenceEngine(InferenceEngine):
 
                 self._discard_cancelled_requests_from_queue()
 
-    def _get_requests(self):
+    def _get_requests_to_process(self):
         requests = []
-        for state in self.current_batch.values():
-            if state.next_start_position == 0:
-                requests.append(
-                    PrefillRequest(
-                        request_id=state.request_id,
-                        token_ids=state.token_ids,
-                        num_sequence=1,
-                        sampling_params=state.sampling_params,
+        is_prompt_batch = any(
+            state.next_start_position == 0 for state in self.current_batch.values()
+        )
+
+        if is_prompt_batch:
+            for state in self.current_batch.values():
+                if state.next_start_position == 0:
+                    requests.append(
+                        PrefillRequest(
+                            request_id=state.request_id,
+                            token_ids=state.token_ids,
+                            num_sequence=1,
+                            sampling_params=state.sampling_params,
+                        )
                     )
-                )
-            else:
+        else:
+            for state in self.current_batch.values():
                 seq_id = SequenceId(state.request_id, 0)
                 requests.append(
                     DecodeRequest(
@@ -272,6 +278,7 @@ class LocalProcessInferenceEngine(InferenceEngine):
                 self.cache_manager.extend(
                     seq_id, len(state.token_ids) - state.next_start_position
                 )
+
         return requests
 
     def _has_request_to_process(self) -> bool:
