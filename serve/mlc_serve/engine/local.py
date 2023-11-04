@@ -95,6 +95,8 @@ class LocalProcessInferenceEngine(InferenceEngine):
             )
 
     def step(self) -> InferenceStepResult:
+        logger.debug("Starting new inference step.")
+
         outputs = list[RequestOutput]()
         result = InferenceStepResult(outputs=outputs)
 
@@ -125,6 +127,8 @@ class LocalProcessInferenceEngine(InferenceEngine):
                 self.current_batch.pop(state.request_id)
                 self.cache_manager.free(SequenceId(state.request_id, 0))
 
+        logger.debug("Finsihed stopped request processing.")
+
         previous_requests_to_be_cancelled = set(self.requests_to_be_cancelled)
         self._adjust_batch()
 
@@ -140,12 +144,14 @@ class LocalProcessInferenceEngine(InferenceEngine):
                     )
                 )
 
+        logger.debug("Finsihed request scheduling.")
+
         if not self.current_batch:
             return result
 
         requests = self._get_requests_to_process()
-        logger.debug("Generate text with batch size %s", len(requests))
         results = self.text_generator.generate(requests, self.cache_manager.get_cache())
+        logger.debug("Finished text generation")
 
         for res in results:
             # For now we only support single sequence per request
@@ -173,6 +179,10 @@ class LocalProcessInferenceEngine(InferenceEngine):
                     state.is_ended = True
             state.token_ids.extend(new_token_ids)
 
+        logger.debug("Finished state update and stopping criteria check.")
+
+        for res in results:
+            state = self.current_batch[res.sequence_id.request_id]
             delta = self._decode_last_output(state)
             state.output_text += delta
 
@@ -191,6 +201,8 @@ class LocalProcessInferenceEngine(InferenceEngine):
                     num_prompt_tokens=state.prompt_len,
                 )
             )
+
+        logger.debug("Finished detokenization and output object creation.")
 
         return result
 
@@ -265,6 +277,7 @@ class LocalProcessInferenceEngine(InferenceEngine):
                             sampling_params=state.sampling_params,
                         )
                     )
+            logger.debug("Creating prompt batch with %s requests.", len(requests))
         else:
             for state in self.current_batch.values():
                 seq_id = SequenceId(state.request_id, 0)
@@ -278,6 +291,7 @@ class LocalProcessInferenceEngine(InferenceEngine):
                 self.cache_manager.extend(
                     seq_id, len(state.token_ids) - state.next_start_position
                 )
+            logger.debug("Creating decode batch with %s requests.", len(requests))
 
         return requests
 
