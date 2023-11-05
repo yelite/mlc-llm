@@ -16,7 +16,7 @@ from .base import (
     ScopedInferenceEngine,
     SequenceOutput,
 )
-from .model_module import ConversationTemplate, Tokenizer
+from .model_module import ConversationTemplate, Tokenizer, TokenizerModule
 from .process_worker import (
     AddRequestsCommand,
     CancelRequestCommand,
@@ -29,14 +29,14 @@ logger = logging.getLogger(__name__)
 
 class MultiProcessInferenceEngine(ScopedInferenceEngine):
     def __init__(
-        self, tokenizer: Tokenizer, conversation_template: ConversationTemplate
+        self, tokenizer_module: TokenizerModule
     ):
         self.next_generation_output = None
         self.requests_lock = Lock()
         self.requests = dict[RequestId, RequestState]()
 
-        self.tokenizer = tokenizer
-        self.conversation_template = conversation_template
+        self.tokenizer = tokenizer_module.tokenizer
+        self.conversation_template = tokenizer_module.conversation_template
 
         self.mp_context = multiprocessing.get_context("spawn")
         self.command_queue = self.mp_context.Queue()
