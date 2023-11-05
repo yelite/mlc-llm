@@ -138,3 +138,28 @@ class InferenceEngine:
         If the engine has no requests in the queue, `step` will return immediately with
         an empty `InferenceStepResult.outputs`.
         """
+
+
+class ScopedInferenceEngine(InferenceEngine):
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+@dataclass
+class RequestState:
+    """
+    The internal state of request in the InferenceEngine.
+    """
+
+    request_id: RequestId
+    token_ids: list[int]
+    output_text: str
+    prompt_len: int
+    next_start_position: int
+    sampling_params: SamplingParams
+    stopping_criteria: StoppingCriteria
+    debug_options: DebugOptions
+    is_ended: bool = False

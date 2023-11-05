@@ -1,11 +1,13 @@
 """
-A implementation of InferenceEngine that executes in the current process.
+The worker for 
 """
 
 import logging
+import multiprocessing
 from collections import deque
-from threading import Condition, Lock
-from uuid import uuid4
+from dataclasses import dataclass
+from threading import Condition, Lock, Thread
+from typing import Optional, Union
 
 from .base import (
     DebugOptions,
@@ -25,7 +27,40 @@ from .model_module import DecodeRequest, ModelModule, PrefillRequest, SequenceId
 logger = logging.getLogger(__name__)
 
 
-class LocalProcessInferenceEngine(InferenceEngine):
+@dataclass
+class ShutdownCommand:
+    pass
+
+
+@dataclass
+class AddRequestsCommand:
+    request_states: list[RequestState]
+
+
+@dataclass
+class CancelRequestCommand:
+    request_id: RequestId
+
+
+GenerationLoopWorkerCommand = Union[
+    ShutdownCommand, AddRequestsCommand, CancelRequestCommand
+]
+
+
+@dataclass
+class SequenceGenerationOutput:
+    id: SequenceId
+    new_tokens: list[int]
+    finish_reason: Optional[FinishReason] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class GenerationLoopWorkerOutput:
+    sequences: list[SequenceGenerationOutput]
+
+
+class GenerationLoopWorker:
     def __init__(
         self,
         model_module: ModelModule,
@@ -35,8 +70,6 @@ class LocalProcessInferenceEngine(InferenceEngine):
         prompt_allocate_ratio: float = 2.0,
     ):
         self.text_generator = model_module.text_generator
-        self.tokenizer = model_module.tokenizer
-        self.conversation_template = model_module.conversation_template
         self.cache_manager = model_module.cache_manager
 
         self.max_batched_tokens = max_batched_tokens
@@ -50,44 +83,36 @@ class LocalProcessInferenceEngine(InferenceEngine):
         self.queue_lock = Lock()
         self.queue = deque[RequestState]()
         self.has_new_requests = Condition(lock=self.queue_lock)
-        self.requests_to_be_cancelled = set[RequestId]()
+
+        self.cancelled_requests = list[RequestState]()
 
         self.current_batch = dict[RequestId, RequestState]()
 
-    def add(self, requests: list[Request]):
-        if not requests:
-            return []
-
-        new_request_states = []
-        for req in requests:
-            # TODO: verify that request id is unique
-            if req.num_sequences > 1:
-                raise RuntimeError("num_sequences > 1 is not supported for now")
-            state = self._get_new_request_state(req)
-            new_request_states.append(state)
-
+    def add(self, request_states: list[RequestState]):
         with self.queue_lock:
-            self.queue.extend(new_request_states)
+            self.queue.extend(request_states)
             self.has_new_requests.notify_all()
 
     def cancel(self, request_id: RequestId):
         with self.queue_lock:
-            # TODO: consider iterating throught the queue to find if request id exist
-            # Otherwise cancel a request that's already finished will leave request_id
-            # in the `requests_to_be_cancelled` set forever.
-            self.requests_to_be_cancelled.add(request_id)
+            queue_index_to_delete = None
+            for i, state in enumerate(self.queue):
+                if state.request_id == request_id:
+                    queue_index_to_delete = i
+                    self.cancelled_requests.append(state)
+                    break
 
-    def wait_for_request(self, timeout_seconds=None) -> bool:
-        with self.queue_lock:
-            self.has_new_requests.wait_for(
-                self._has_request_to_process, timeout=timeout_seconds
-            )
+            if queue_index_to_delete is not None:
+                del self.queue[queue_index_to_delete]
 
-    def step(self) -> InferenceStepResult:
+            if request_id in self.current_batch:
+                self.cancelled_requests.append(self.current_batch[request_id])
+
+    def step(self) -> GenerationLoopWorkerOutput:
         logger.debug("Starting new inference step.")
 
-        outputs = list[RequestOutput]()
-        result = InferenceStepResult(outputs=outputs)
+        outputs = list[SequenceGenerationOutput]()
+        result = GenerationLoopWorkerOutput(outputs=outputs)
 
         # TODO: consolidate into a single function
         for state in list(self.current_batch.values()):
@@ -99,39 +124,32 @@ class LocalProcessInferenceEngine(InferenceEngine):
 
             if finish_reason is not None:
                 outputs.append(
-                    RequestOutput(
-                        state.request_id,
-                        [
-                            SequenceOutput(
-                                0,
-                                finish_reason=finish_reason,
-                                num_generated_tokens=(
-                                    len(state.token_ids) - state.prompt_len
-                                ),
-                            )
-                        ],
-                        num_prompt_tokens=state.prompt_len,
+                    SequenceGenerationOutput(
+                        # TODO: support multi-sequence
+                        id=SequenceId(state.request_id, 0),
+                        new_tokens=[],
+                        finish_reason=finish_reason,
                     )
                 )
-                self.current_batch.pop(state.request_id)
-                self.cache_manager.free(SequenceId(state.request_id, 0))
+                self._remove_request_from_batch(state.request_id)
+
+        for state in self.cancelled_requests:
+            outputs.append(
+                SequenceGenerationOutput(
+                    # TODO: support multi-sequence
+                    id=SequenceId(state.request_id, 0),
+                    new_tokens=[],
+                    finish_reason=FinishReason.Cancelled,
+                )
+            )
+            if state.request_id in self.current_batch:
+                self._remove_request_from_batch(state.request_id)
+
+        self.cancelled_requests.clear()
 
         logger.debug("Finsihed stopped request processing.")
 
-        previous_requests_to_be_cancelled = set(self.requests_to_be_cancelled)
         self._adjust_batch()
-
-        for request_id in previous_requests_to_be_cancelled:
-            if request_id not in self.requests_to_be_cancelled:
-                outputs.append(
-                    RequestOutput(
-                        request_id=request_id,
-                        sequences=[
-                            # TODO: support multi-sequence
-                            SequenceOutput(0, finish_reason=FinishReason.Cancelled)
-                        ],
-                    )
-                )
 
         logger.debug("Finsihed request scheduling.")
 
@@ -146,11 +164,12 @@ class LocalProcessInferenceEngine(InferenceEngine):
             # For now we only support single sequence per request
             request_id = res.sequence_id.request_id
             if res.error is not None:
-                del self.current_batch[request_id]
-                self.cache_manager.free(res.sequence_id)
+                self._remove_request_from_batch(request_id)
                 outputs.append(
-                    RequestOutput(
-                        res.sequence_id.request_id,
+                    SequenceGenerationOutput(
+                        # TODO: support multi-sequence
+                        id=res.sequence_id,
+                        new_tokens=[],
                         error=res.error,
                     )
                 )
@@ -158,58 +177,31 @@ class LocalProcessInferenceEngine(InferenceEngine):
 
             state = self.current_batch[request_id]
             state.next_start_position = len(state.token_ids)
-            new_token_ids = res.generated_tokens
-            for i, token_id in enumerate(new_token_ids):
+            new_tokens = res.generated_tokens
+            for i, token_id in enumerate(new_tokens):
                 if (
                     token_id == self.tokenizer.eos_token_id
                     and not state.debug_options.ignore_eos
                 ):
-                    new_token_ids = new_token_ids[:i]
+                    new_tokens = new_tokens[:i]
                     state.is_ended = True
                     break
-            state.token_ids.extend(new_token_ids)
-
-        logger.debug("Finished state update and stopping criteria check.")
-
-        for res in results:
-            state = self.current_batch[res.sequence_id.request_id]
-            delta = self._decode_last_output(state)
-            state.output_text += delta
-
+            state.token_ids.extend(new_tokens)
             outputs.append(
-                RequestOutput(
-                    request_id,
-                    sequences=[
-                        SequenceOutput(
-                            0,
-                            delta=delta,
-                            num_generated_tokens=(
-                                len(state.token_ids) - state.prompt_len
-                            ),
-                        ),
-                    ],
-                    num_prompt_tokens=state.prompt_len,
-                )
+                SequenceGenerationOutput(id=res.sequence_id, new_tokens=new_tokens)
             )
 
-        logger.debug("Finished detokenization and output object creation.")
+        logger.debug("Finished state update and stopping criteria check.")
 
         return result
 
     def _adjust_batch(self):
         with self.queue_lock:
-            for request_id in list(self.requests_to_be_cancelled):
-                if request_id in self.current_batch:
-                    state = self.current_batch.pop(request_id)
-                    self.cache_manager.free(state.request_id)
-                    self.requests_to_be_cancelled.remove(request_id)
-
             while self.cache_manager.get_max_new_tokens() < 1:
                 request_to_remove = min(
                     self.current_batch.values(), key=lambda s: len(s.token_ids)
                 )
-                del self.current_batch[request_to_remove.request_id]
-                self.cache_manager.free(SequenceId(request_to_remove.request_id, 0))
+                self._remove_request_from_batch(request_to_remove.request_id)
                 self.queue.appendleft(request_to_remove)
 
             self._discard_cancelled_requests_from_queue()
@@ -257,6 +249,10 @@ class LocalProcessInferenceEngine(InferenceEngine):
 
                 self._discard_cancelled_requests_from_queue()
 
+    def _remove_request_from_batch(self, request_id: RequestId):
+        del self.current_batch[request_id]
+        self.cache_manager.free(SequenceId(request_id, 0))
+
     def _get_requests_to_process(self):
         requests = []
         # TODO: consider having hybrid batch if the underlying attention kernel supports
@@ -301,49 +297,6 @@ class LocalProcessInferenceEngine(InferenceEngine):
     def _has_request_to_process(self) -> bool:
         return self.queue or self.current_batch
 
-    def _discard_cancelled_requests_from_queue(self):
-        """
-        Requires the self.queue_lock to be held before calling this function.
-        """
-        while self.queue and self.queue[0].request_id in self.requests_to_be_cancelled:
-            state = self.queue.popleft()
-            self.requests_to_be_cancelled.remove(state.request_id)
-
-    def _get_new_request_state(self, request: Request) -> RequestState:
-        if request.debug_options.prompt is not None:
-            prompt = request.debug_options.prompt
-        else:
-            prompt = self.conversation_template.apply(request.messages)
-
-        prompt_tokens = self.tokenizer.encode(prompt)
-
-        return RequestState(
-            request_id=request.request_id,
-            token_ids=prompt_tokens,
-            prompt_len=len(prompt_tokens),
-            next_start_position=0,
-            sampling_params=request.sampling_params,
-            stopping_criteria=request.stopping_criteria,
-            debug_options=request.debug_options,
-            output_text="",
-        )
-
-    def _decode_last_output(self, state: RequestState) -> str:
-        if len(state.output_text):
-            prefix_idx = max(0, state.next_start_position - 6)
-        else:
-            prefix_idx = state.next_start_position
-
-        if prefix_idx == 0:
-            return self.tokenizer.decode(state.token_ids)
-
-        prefix = self.tokenizer.decode(
-            state.token_ids[prefix_idx : state.next_start_position]
-        )
-        full = self.tokenizer.decode(state.token_ids[prefix_idx:])
-
-        return full[len(prefix) :]
-
     def _should_stop_by_length(self, state: RequestState) -> bool:
         # TODO: put to config
         max_tokens = 4096
@@ -351,3 +304,38 @@ class LocalProcessInferenceEngine(InferenceEngine):
             max_tokens = min(max_tokens, state.stopping_criteria.max_tokens)
 
         return len(state.token_ids) - state.prompt_len >= max_tokens
+
+
+def run_generation_loop_worker(
+    command_queue: multiprocessing.Queue, result_queue: multiprocessing.Queue
+):
+    worker = GenerationLoopWorker(...)
+
+    should_stop = False
+
+    def generate():
+        while True:
+            if should_stop:
+                return
+            output = worker.step()
+            if output.sequences:
+                # result_queue should have size limit and the blocking behavior
+                # of queue.put will naturally limits the tokens it generates ahead of time.
+                result_queue.put(output)
+
+    generate_thread = Thread(target=generate)
+    generate_thread.start()
+
+    while True:
+        cmd = command_queue.get()
+        if isinstance(cmd, ShutdownCommand):
+            should_stop = True
+            break
+        elif isinstance(cmd, AddRequestsCommand):
+            worker.add(cmd.request_states)
+        elif isinstance(cmd, CancelRequestCommand):
+            worker.cancel(cmd.request_id)
+        else:
+            logger.error("Unknown command type %s", type(cmd))
+
+    generate_thread.join()
