@@ -1,5 +1,5 @@
 """
-The worker for 
+The worker for MultiProcessInferenceEngine
 """
 
 import logging
@@ -9,19 +9,7 @@ from dataclasses import dataclass
 from threading import Condition, Lock, Thread
 from typing import Optional, Union
 
-from .base import (
-    DebugOptions,
-    FinishReason,
-    InferenceEngine,
-    InferenceStepResult,
-    Request,
-    RequestId,
-    RequestOutput,
-    RequestState,
-    SamplingParams,
-    SequenceOutput,
-    StoppingCriteria,
-)
+from .base import FinishReason, RequestId, RequestState
 from .model_module import DecodeRequest, ModelModule, PrefillRequest, SequenceId
 
 logger = logging.getLogger(__name__)
@@ -65,8 +53,8 @@ class GenerationLoopWorker:
         self,
         model_module: ModelModule,
         max_batched_tokens: int = 2560,
-        min_decode_steps: int = 100,
-        max_decode_steps: int = 300,
+        min_decode_steps: int = 32,
+        max_decode_steps: int = 48,
         prompt_allocate_ratio: float = 2.0,
     ):
         self.text_generator = model_module.text_generator
@@ -107,6 +95,15 @@ class GenerationLoopWorker:
 
             if request_id in self.current_batch:
                 self.cancelled_requests.append(self.current_batch[request_id])
+
+    def wait_for_request(self, timeout_seconds=None) -> bool:
+        with self.queue_lock:
+            self.has_new_requests.wait_for(
+                self._has_request_to_process, timeout=timeout_seconds
+            )
+
+    def _has_request_to_process(self) -> bool:
+        return self.queue or self.current_batch
 
     def step(self) -> GenerationLoopWorkerOutput:
         logger.debug("Starting new inference step.")
@@ -307,14 +304,21 @@ class GenerationLoopWorker:
 
 
 def run_generation_loop_worker(
-    command_queue: multiprocessing.Queue, result_queue: multiprocessing.Queue
+    model_module_loader,
+    loader_kwargs,
+    worker_kwargs,
+    command_queue: multiprocessing.Queue,
+    result_queue: multiprocessing.Queue,
+    ready_event: multiprocessing.Event,
 ):
-    worker = GenerationLoopWorker(...)
+    module_module = model_module_loader(**loader_kwargs)
+    worker = GenerationLoopWorker(model_module=module_module, **worker_kwargs)
 
     should_stop = False
 
     def generate():
         while True:
+            worker.wait_for_request(timeout_seconds=1)
             if should_stop:
                 return
             output = worker.step()
@@ -325,6 +329,8 @@ def run_generation_loop_worker(
 
     generate_thread = Thread(target=generate)
     generate_thread.start()
+
+    ready_event.set()
 
     while True:
         cmd = command_queue.get()

@@ -5,30 +5,18 @@ A implementation of InferenceEngine that offload the inference loop to child pro
 import logging
 import multiprocessing
 import queue
-from collections import deque
-from threading import Condition, Lock
+from threading import Lock
 
 from .base import (
-    DebugOptions,
-    FinishReason,
     InferenceStepResult,
     Request,
     RequestId,
     RequestOutput,
     RequestState,
-    SamplingParams,
     ScopedInferenceEngine,
     SequenceOutput,
-    StoppingCriteria,
 )
-from .model_module import (
-    ConversationTemplate,
-    DecodeRequest,
-    ModelModule,
-    PrefillRequest,
-    SequenceId,
-    Tokenizer,
-)
+from .model_module import ConversationTemplate, Tokenizer
 from .process_worker import (
     AddRequestsCommand,
     CancelRequestCommand,
@@ -44,13 +32,15 @@ class MultiProcessInferenceEngine(ScopedInferenceEngine):
         self, tokenizer: Tokenizer, conversation_template: ConversationTemplate
     ):
         self.next_generation_output = None
+        self.requests_lock = Lock()
+        self.requests = dict[RequestId, RequestState]()
 
         self.tokenizer = tokenizer
         self.conversation_template = conversation_template
 
         self.mp_context = multiprocessing.get_context("spawn")
         self.command_queue = self.mp_context.Queue()
-        self.result_queue = self.mp_context.Queue(maxsize=2)
+        self.result_queue = self.mp_context.Queue(maxsize=1)
         self.worker_process = self.mp_context.Process(
             target=run_generation_loop_worker,
             args=(self.command_queue, self.result_queue),
@@ -77,6 +67,9 @@ class MultiProcessInferenceEngine(ScopedInferenceEngine):
 
         self.worker_process.put(AddRequestsCommand(request_states=new_request_states))
 
+        with self.requests_lock:
+            self.requests.update({s.request_id: s for s in new_request_states})
+
     def cancel(self, request_id: RequestId):
         if not self.worker_process.is_alive():
             raise RuntimeError("GenerationLoopWorker process is not running")
@@ -102,8 +95,54 @@ class MultiProcessInferenceEngine(ScopedInferenceEngine):
             generation_output = self.next_generation_output
             self.next_generation_output = None
 
-        # TODO: convert generation output
-        outputs = []
+        outputs = list[RequestOutput]()
+        with self.requests_lock:
+            for seq_output in generation_output.sequences:
+                # TODO: support multi-sequence per request
+                request_id = seq_output.id.request_id
+                if request_id not in self.requests:
+                    logger.warn(
+                        "Unknown request %s from GenerationLoopWorkerOutput", request_id
+                    )
+                    continue
+
+                state = self.requests[request_id]
+
+                if seq_output.error is not None:
+                    outputs.append(
+                        RequestOutput(
+                            request_id,
+                            sequences=[],
+                            error=seq_output.error,
+                            num_prompt_tokens=state.prompt_len,
+                        )
+                    )
+                    del self.requests[request_id]
+                    continue
+
+                state.next_start_position = len(state.token_ids)
+                state.token_ids.extend(seq_output.new_tokens)
+
+                delta = self._decode_last_output(state)
+                state.output_text += delta
+
+                outputs.append(
+                    RequestOutput(
+                        request_id,
+                        sequences=[
+                            SequenceOutput(
+                                0,
+                                delta=delta,
+                                num_generated_tokens=(
+                                    len(state.token_ids) - state.prompt_len
+                                ),
+                                finish_reason=seq_output.finish_reason,
+                            ),
+                        ],
+                        num_prompt_tokens=state.prompt_len,
+                    )
+                )
+
         return None
 
     def _get_new_request_state(self, request: Request) -> RequestState:

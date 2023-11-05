@@ -151,6 +151,7 @@ class LocalProcessInferenceEngine(InferenceEngine):
                 outputs.append(
                     RequestOutput(
                         res.sequence_id.request_id,
+                        sequences=[],
                         error=res.error,
                     )
                 )
