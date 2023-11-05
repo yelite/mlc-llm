@@ -1,11 +1,11 @@
 """
-A implementation of InferenceEngine that offload the inference loop to child process.
+An implementation of InferenceEngine that offloads the text generation loop to another worker process.
 """
-
 import logging
 import multiprocessing
 import queue
 from threading import Lock
+from typing import Callable
 
 from .base import (
     InferenceStepResult,
@@ -16,8 +16,8 @@ from .base import (
     ScopedInferenceEngine,
     SequenceOutput,
 )
-from .model_module import ConversationTemplate, Tokenizer, TokenizerModule
-from .process_worker import (
+from .model_module import TextTokenGeneratorModule, TokenizerModule
+from .pipelined_engine_worker import (
     AddRequestsCommand,
     CancelRequestCommand,
     ShutdownCommand,
@@ -27,9 +27,23 @@ from .process_worker import (
 logger = logging.getLogger(__name__)
 
 
-class MultiProcessInferenceEngine(ScopedInferenceEngine):
+class PipelinedInferenceEngine(ScopedInferenceEngine):
+    """
+    An implementation of InferenceEngine that offloads the text generation loop to another worker process,
+    Text tokens are generated asynchronously from the invocation of `step`. The generation progress could be one step
+    ahead of the invocation of `step`. Tokenization and detokenization is still processed synchronously
+    when `step` is called.
+    """
+
     def __init__(
-        self, tokenizer_module: TokenizerModule
+        self,
+        tokenizer_module: TokenizerModule,
+        generator_module_loader: Callable[..., TextTokenGeneratorModule],
+        generator_module_loader_kwargs: dict,
+        max_batched_tokens: int = 2560,
+        min_decode_steps: int = 32,
+        max_decode_steps: int = 48,
+        prompt_allocate_ratio: float = 2.0,
     ):
         self.next_generation_output = None
         self.requests_lock = Lock()
@@ -41,20 +55,37 @@ class MultiProcessInferenceEngine(ScopedInferenceEngine):
         self.mp_context = multiprocessing.get_context("spawn")
         self.command_queue = self.mp_context.Queue()
         self.result_queue = self.mp_context.Queue(maxsize=1)
+        self.ready_event = self.mp_context.Event()
         self.worker_process = self.mp_context.Process(
             target=run_generation_loop_worker,
-            args=(self.command_queue, self.result_queue),
+            args=(
+                generator_module_loader,
+                generator_module_loader_kwargs,
+                {
+                    "max_batched_tokens": max_batched_tokens,
+                    "min_decode_steps": min_decode_steps,
+                    "max_decode_steps": max_decode_steps,
+                    "prompt_allocate_ratio": prompt_allocate_ratio,
+                },
+                self.command_queue,
+                self.result_queue,
+                self.ready_event,
+            ),
         )
 
     def start(self):
         self.worker_process.start()
+        if not self.ready_event.wait(timeout=180):
+            raise RuntimeError(
+                "AsyncInferenceEngine worker is not ready before timeout."
+            )
 
     def stop(self):
         self.command_queue.put(ShutdownCommand())
         self.worker_process.join()
 
     def add(self, requests: list[Request]):
-        if not self.worker_process.is_alive():
+        if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
 
         new_request_states = []
@@ -71,11 +102,14 @@ class MultiProcessInferenceEngine(ScopedInferenceEngine):
             self.requests.update({s.request_id: s for s in new_request_states})
 
     def cancel(self, request_id: RequestId):
-        if not self.worker_process.is_alive():
+        if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
         self.worker_process.put(CancelRequestCommand(request_id))
 
     def wait_for_request(self, timeout_seconds=None) -> bool:
+        if not self._is_ready_to_serve():
+            raise RuntimeError("GenerationLoopWorker process is not running")
+
         if self.next_generation_output is not None:
             return True
 
@@ -86,6 +120,9 @@ class MultiProcessInferenceEngine(ScopedInferenceEngine):
             return False
 
     def step(self) -> InferenceStepResult:
+        if not self._is_ready_to_serve():
+            raise RuntimeError("GenerationLoopWorker process is not running")
+
         if self.next_generation_output is None:
             try:
                 generation_output = self.result_queue.get_nowait()
@@ -144,6 +181,9 @@ class MultiProcessInferenceEngine(ScopedInferenceEngine):
                 )
 
         return None
+
+    def _is_ready_to_serve(self) -> bool:
+        return self.worker_process is not None and self.worker_process.is_alive()
 
     def _get_new_request_state(self, request: Request) -> RequestState:
         if request.debug_options.prompt is not None:

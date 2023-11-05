@@ -181,3 +181,4 @@ class TokenizerModule(Protocol):
 
 class ModelModule(TextTokenGeneratorModule, TokenizerModule):
     pass
+
