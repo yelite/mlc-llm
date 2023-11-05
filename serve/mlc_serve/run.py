@@ -9,8 +9,9 @@ from mlc_llm import utils
 
 from .api import create_app
 from .engine import AsyncEngineConnector
-from .engine.local import LocalProcessInferenceEngine
-from .model.paged_cache_model import PagedCacheModelModule
+from .engine.pipelined_engine import PipelinedInferenceEngine
+from .engine.sync_engine import SynchronousInferenceEngine
+from .model.paged_cache_model import HfTokenizerModule, PagedCacheModelModule
 
 
 def parse_args():
@@ -32,9 +33,11 @@ def parse_args():
     args.add_argument("--local-id", type=str, required=True)
     args.add_argument("--artifact-path", type=str, default="dist")
     args.add_argument("--num-shards", type=int, default=1)
+    args.add_argument("--use-pipelined-engine", action="store_true")
     args.add_argument("--max-num-batched-tokens", type=int, default=-1)
     args.add_argument("--max-input-len", type=int, default=-1)
-    args.add_argument("--min-decode-steps", type=int, default=256)
+    args.add_argument("--min-decode-steps", type=int, default=32)
+    args.add_argument("--max-decode-steps", type=int, default=48)
     args.add_argument("--debug-logging", action="store_true")
     parsed = args.parse_args()
     parsed.model, parsed.quantization = parsed.local_id.rsplit("-", 1)
@@ -71,23 +74,49 @@ def setup_logging(args):
     logging.config.dictConfig(logging_config)
 
 
+def create_engine(
+    args: argparse.Namespace,
+):
+    if args.use_pipelined_engine:
+        tokenizer_module = HfTokenizerModule(args.model, args.artifact_path)
+        return PipelinedInferenceEngine(
+            tokenizer_module=tokenizer_module,
+            generator_module_loader=PagedCacheModelModule,
+            generator_module_loader_kwargs={
+                "model_name": args.model,
+                "artifact_path": args.artifact_path,
+                "quantization": args.quantization.name,
+                "num_shards": args.num_shards,
+                "max_num_batched_tokens": args.max_num_batched_tokens,
+                "max_input_len": args.max_input_len,
+            },
+            max_batched_tokens=args.max_num_batched_tokens,
+            min_decode_steps=args.min_decode_steps,
+            max_decode_steps=args.max_decode_steps,
+        )
+    else:
+        model_module = PagedCacheModelModule(
+            args.model,
+            args.artifact_path,
+            args.quantization.name,
+            args.num_shards,
+            max_num_batched_tokens=args.max_num_batched_tokens,
+            max_input_len=args.max_input_len,
+        )
+
+        return SynchronousInferenceEngine(
+            model_module,
+            max_batched_tokens=args.max_num_batched_tokens,
+            min_decode_steps=args.min_decode_steps,
+            max_decode_steps=args.max_decode_steps,
+        )
+
+
 def run_server():
     args = parse_args()
     setup_logging(args)
-    model_module = PagedCacheModelModule(
-        args.model,
-        args.artifact_path,
-        args.quantization.name,
-        args.num_shards,
-        max_num_batched_tokens=args.max_num_batched_tokens,
-        max_input_len=args.max_input_len,
-    )
 
-    engine = LocalProcessInferenceEngine(
-        model_module,
-        max_batched_tokens=args.max_num_batched_tokens,
-        min_decode_steps=args.min_decode_steps,
-    )
+    engine = create_engine(args)
     connector = AsyncEngineConnector(engine)
     app = create_app(connector)
     uvicorn.run(
