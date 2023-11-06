@@ -121,6 +121,11 @@ class InferenceEngine:
         The output will contain empty delta and finish reason `cancelled`.
         """
 
+    def has_pending_requests(self) -> bool:
+        """
+        Check if there is pending requests in the engine.
+        """
+
     def wait_for_request(self, timeout_seconds=None) -> bool:
         """
         Block until there is request to process.

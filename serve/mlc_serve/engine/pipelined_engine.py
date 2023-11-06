@@ -106,6 +106,10 @@ class PipelinedInferenceEngine(ScopedInferenceEngine):
             raise RuntimeError("GenerationLoopWorker process is not running")
         self.command_queue.put(CancelRequestCommand(request_id))
 
+    def has_pending_requests(self) -> bool:
+        with self.requests_lock:
+            return len(self.requests) > 0
+
     def wait_for_request(self, timeout_seconds=None) -> bool:
         if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
@@ -180,7 +184,7 @@ class PipelinedInferenceEngine(ScopedInferenceEngine):
                     )
                 )
 
-        return None
+        return InferenceStepResult(outputs=outputs)
 
     def _is_ready_to_serve(self) -> bool:
         return self.worker_process is not None and self.worker_process.is_alive()

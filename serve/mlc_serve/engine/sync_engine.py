@@ -85,7 +85,7 @@ class SynchronousInferenceEngine(InferenceEngine):
     def wait_for_request(self, timeout_seconds=None) -> bool:
         with self.queue_lock:
             self.has_new_requests.wait_for(
-                self._has_request_to_process, timeout=timeout_seconds
+                self.has_pending_requests, timeout=timeout_seconds
             )
 
     def step(self) -> InferenceStepResult:
@@ -304,7 +304,7 @@ class SynchronousInferenceEngine(InferenceEngine):
 
         return requests
 
-    def _has_request_to_process(self) -> bool:
+    def has_pending_requests(self) -> bool:
         return self.queue or self.current_batch
 
     def _discard_cancelled_requests_from_queue(self):
