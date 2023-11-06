@@ -333,7 +333,7 @@ def run_generation_loop_worker(
     command_queue: multiprocessing.Queue,
     result_queue: multiprocessing.Queue,
     ready_event: multiprocessing.Event,
-    log_level="DEBUG",
+    log_level="INFO",
 ):
     setup_logging(log_level)
     model_module = model_module_loader(**model_module_loader_kwargs)
