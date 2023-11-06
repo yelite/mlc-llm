@@ -96,7 +96,7 @@ class PipelinedInferenceEngine(ScopedInferenceEngine):
             state = self._get_new_request_state(req)
             new_request_states.append(state)
 
-        self.worker_process.put(AddRequestsCommand(request_states=new_request_states))
+        self.command_queue.put(AddRequestsCommand(request_states=new_request_states))
 
         with self.requests_lock:
             self.requests.update({s.request_id: s for s in new_request_states})
@@ -104,7 +104,7 @@ class PipelinedInferenceEngine(ScopedInferenceEngine):
     def cancel(self, request_id: RequestId):
         if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
-        self.worker_process.put(CancelRequestCommand(request_id))
+        self.command_queue.put(CancelRequestCommand(request_id))
 
     def wait_for_request(self, timeout_seconds=None) -> bool:
         if not self._is_ready_to_serve():

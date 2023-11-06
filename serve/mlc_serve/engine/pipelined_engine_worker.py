@@ -115,7 +115,7 @@ class GenerationLoopWorker:
         logger.debug("Starting new inference step.")
 
         outputs = list[SequenceGenerationOutput]()
-        result = GenerationLoopWorkerOutput(outputs=outputs)
+        result = GenerationLoopWorkerOutput(sequences=outputs)
 
         # TODO: consolidate into a single function
         for state in list(self.current_batch.values()):
@@ -322,32 +322,37 @@ def run_generation_loop_worker(
 
     should_stop = False
 
-    def generate():
+    def handle_command():
         while True:
-            worker.wait_for_request(timeout_seconds=1)
-            if should_stop:
-                return
-            output = worker.step()
-            if output.sequences:
-                # result_queue should have size limit and the blocking behavior
-                # of queue.put will naturally limits the tokens it generates ahead of time.
-                result_queue.put(output)
+            cmd = command_queue.get()
+            if isinstance(cmd, ShutdownCommand):
+                break
+            elif isinstance(cmd, AddRequestsCommand):
+                worker.add(cmd.request_states)
+            elif isinstance(cmd, CancelRequestCommand):
+                worker.cancel(cmd.request_id)
+            else:
+                logger.error("Unknown command type %s", type(cmd))
+                break
 
-    generate_thread = Thread(target=generate)
-    generate_thread.start()
+        nonlocal should_stop
+        should_stop = True
+
+    handler_thread = Thread(
+        target=handle_command, name="pipelined-engine-worker-command-handler"
+    )
+    handler_thread.start()
 
     ready_event.set()
 
     while True:
-        cmd = command_queue.get()
-        if isinstance(cmd, ShutdownCommand):
-            should_stop = True
-            break
-        elif isinstance(cmd, AddRequestsCommand):
-            worker.add(cmd.request_states)
-        elif isinstance(cmd, CancelRequestCommand):
-            worker.cancel(cmd.request_id)
-        else:
-            logger.error("Unknown command type %s", type(cmd))
+        worker.wait_for_request(timeout_seconds=1)
+        if should_stop:
+            return
+        output = worker.step()
+        if output.sequences:
+            # result_queue should have size limit and the blocking behavior
+            # of queue.put will naturally limits the tokens it generates ahead of time.
+            result_queue.put(output)
 
-    generate_thread.join()
+    handler_thread.join()
