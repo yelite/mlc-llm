@@ -305,6 +305,31 @@ class GenerationLoopWorker:
         return len(state.token_ids) - state.prompt_len >= max_tokens
 
 
+def setup_logging(level):
+    logging_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "standard": {
+                "format": "%(asctime)s [%(levelname)s] - %(name)s - %(message)s",
+            },
+        },
+        "handlers": {
+            "console": {
+                "level": level,  # Set the handler's log level to DEBUG
+                "class": "logging.StreamHandler",
+                "formatter": "standard",
+            },
+        },
+        "root": {
+            "handlers": ["console"],
+            "level": level,  # Set the logger's log level to DEBUG
+        },
+        "mlc_serve.engine.pipelined_engine_worker": {"level": level},
+    }
+    logging.config.dictConfig(logging_config)
+
+
 def run_generation_loop_worker(
     model_module_loader: Callable[..., ModelModule],
     model_module_loader_kwargs: dict,
@@ -312,7 +337,9 @@ def run_generation_loop_worker(
     command_queue: multiprocessing.Queue,
     result_queue: multiprocessing.Queue,
     ready_event: multiprocessing.Event,
+    log_level="DEBUG",
 ):
+    setup_logging(log_level)
     model_module = model_module_loader(**model_module_loader_kwargs)
     worker = GenerationLoopWorker(model_module=model_module, **worker_kwargs)
 
