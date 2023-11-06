@@ -318,7 +318,7 @@ def run_generation_loop_worker(
     ready_event: multiprocessing.Event,
 ):
     generator_module = generator_module_loader(**generator_module_loader_kwargs)
-    worker = GenerationLoopWorker(model_module=generator_module, **worker_kwargs)
+    worker = GenerationLoopWorker(generator_module=generator_module, **worker_kwargs)
 
     should_stop = False
 
