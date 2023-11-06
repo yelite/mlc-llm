@@ -101,10 +101,10 @@ class GenerationLoopWorker:
     def wait_for_request(self, timeout_seconds=None) -> bool:
         with self.queue_lock:
             self.has_new_requests.wait_for(
-                self._has_request_to_process, timeout=timeout_seconds
+                self.has_pending_requests, timeout=timeout_seconds
             )
 
-    def _has_request_to_process(self) -> bool:
+    def has_pending_requests(self) -> bool:
         return self.queue or self.current_batch
 
     def step(self) -> GenerationLoopWorkerOutput:
@@ -372,6 +372,9 @@ def run_generation_loop_worker(
         worker.wait_for_request(timeout_seconds=1)
         if should_stop:
             return
+        if not worker.has_pending_requests():
+            continue
+
         try:
             output = worker.step()
         except Exception as exc:
