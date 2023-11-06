@@ -88,8 +88,11 @@ def run_mlc(
 
     start = time.time()
 
-    while engine._has_request_to_process():
-        engine.step()
+    while True:
+        result = engine.step()
+        if not result.outputs:
+            # Empty outputs means no pending requests in the engine
+            break
 
     end = time.time()
     return end - start
