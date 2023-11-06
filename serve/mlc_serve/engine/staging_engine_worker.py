@@ -146,11 +146,7 @@ class GenerationLoopWorker:
 
         self.cancelled_requests.clear()
 
-        logger.debug("Finsihed stopped request processing.")
-
         self._adjust_batch()
-
-        logger.debug("Finsihed request scheduling.")
 
         if not self.current_batch:
             return result

@@ -121,8 +121,6 @@ class SynchronousInferenceEngine(InferenceEngine):
                 self.current_batch.pop(state.request_id)
                 self.cache_manager.free(SequenceId(state.request_id, 0))
 
-        logger.debug("Finsihed stopped request processing.")
-
         previous_requests_to_be_cancelled = set(self.requests_to_be_cancelled)
         self._adjust_batch()
 
@@ -137,8 +135,6 @@ class SynchronousInferenceEngine(InferenceEngine):
                         ],
                     )
                 )
-
-        logger.debug("Finsihed request scheduling.")
 
         if not self.current_batch:
             return result
@@ -174,8 +170,6 @@ class SynchronousInferenceEngine(InferenceEngine):
                     state.is_ended = True
                     break
             state.token_ids.extend(new_token_ids)
-
-        logger.debug("Finished state update and stopping criteria check.")
 
         for res in results:
             state = self.current_batch[res.sequence_id.request_id]
