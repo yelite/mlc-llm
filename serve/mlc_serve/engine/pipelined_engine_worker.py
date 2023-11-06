@@ -207,8 +207,6 @@ class GenerationLoopWorker:
                 self._remove_request_from_batch(request_to_remove.request_id)
                 self.queue.appendleft(request_to_remove)
 
-            self._discard_cancelled_requests_from_queue()
-
             if self.cache_manager.get_max_new_tokens() <= self.max_decode_steps:
                 logger.debug(
                     "Skip growing the batch due to max_decode_steps. Decode steps: %s",
@@ -249,8 +247,6 @@ class GenerationLoopWorker:
                 self.queue.popleft()
                 self.cache_manager.allocate(state.request_id, num_tokens)
                 self.current_batch[state.request_id] = state
-
-                self._discard_cancelled_requests_from_queue()
 
     def _remove_request_from_batch(self, request_id: RequestId):
         del self.current_batch[request_id]
