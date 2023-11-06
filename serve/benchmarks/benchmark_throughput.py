@@ -115,7 +115,7 @@ def create_engine_and_tokenizer_module(
             min_decode_steps=args.min_decode_steps,
             max_decode_steps=args.max_decode_steps,
         )
-
+        engine.start()
     else:
         model_module = PagedCacheModelModule(
             args.model,
@@ -152,6 +152,9 @@ def main(args: argparse.Namespace):
         requests,
         engine,
     )
+
+    if args.use_pipelined_engine:
+        engine.stop()
 
     total_num_tokens = sum(
         prompt_len + output_len for _, prompt_len, output_len in requests
