@@ -46,6 +46,7 @@ class SequenceGenerationOutput:
 @dataclass
 class GenerationLoopWorkerOutput:
     sequences: list[SequenceGenerationOutput]
+    error: Optional[str] = None
 
 
 class GenerationLoopWorker:
@@ -340,7 +341,14 @@ def run_generation_loop_worker(
         worker.wait_for_request(timeout_seconds=1)
         if should_stop:
             return
-        output = worker.step()
+        try:
+            output = worker.step()
+        except Exception as exc:
+            logger.exception("Error when calling GenerationLoopWorker.step")
+            output = GenerationLoopWorkerOutput(sequences=[], error=str(exc))
+            result_queue.put(output)
+            break
+
         if output.sequences:
             # result_queue should have size limit and the blocking behavior
             # of queue.put will naturally limits the tokens it generates ahead of time.

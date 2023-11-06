@@ -135,6 +135,11 @@ class PipelinedInferenceEngine(ScopedInferenceEngine):
             generation_output = self.next_generation_output
             self.next_generation_output = None
 
+        if generation_output.error is not None:
+            raise RuntimeError(
+                f"Error when calling GenerationLoopWorker: {generation_output.error}"
+            )
+
         outputs = list[RequestOutput]()
         with self.requests_lock:
             for seq_output in generation_output.sequences:
