@@ -183,6 +183,9 @@ class PipelinedInferenceEngine(ScopedInferenceEngine):
                     )
                 )
 
+                if seq_output.finish_reason is not None:
+                    del self.requests[request_id]
+
         return InferenceStepResult(outputs=outputs)
 
     def _is_ready_to_serve(self) -> bool:
