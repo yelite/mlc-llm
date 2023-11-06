@@ -189,8 +189,8 @@ if __name__ == "__main__":
     parser.add_argument("--use-pipelined-engine", action="store_true")
     parser.add_argument("--max-num-batched-tokens", type=int, default=-1)
     parser.add_argument("--max-input-len", type=int, default=-1)
-    parser.add_argument("--min-decode-steps", type=int, default=32)
-    parser.add_argument("--max-decode-steps", type=int, default=48)
+    parser.add_argument("--min-decode-steps", type=int, default=22)
+    parser.add_argument("--max-decode-steps", type=int, default=30)
     parser.add_argument(
         "--num-prompts", type=int, default=1000, help="Number of prompts to process."
     )
