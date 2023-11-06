@@ -202,6 +202,10 @@ class GenerationLoopWorker:
                 )
                 self._remove_request_from_batch(request_to_remove.request_id)
                 self.queue.appendleft(request_to_remove)
+                logger.debug(
+                    "Preempt request to free %s tokens",
+                    len(request_to_remove.token_ids),
+                )
 
             if self.cache_manager.get_max_new_tokens() <= self.max_decode_steps:
                 logger.debug(
