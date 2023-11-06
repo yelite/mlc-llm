@@ -13,7 +13,7 @@ from mlc_serve.engine import (
     SamplingParams,
     StoppingCriteria,
 )
-from mlc_serve.engine.pipelined_engine import PipelinedInferenceEngine
+from mlc_serve.engine.staging_engine import StagingInferenceEngine
 from mlc_serve.engine.sync_engine import SynchronousInferenceEngine
 from mlc_serve.model.paged_cache_model import HfTokenizerModule, PagedCacheModelModule
 from mlc_serve.run import setup_logging
@@ -98,9 +98,9 @@ def run_mlc(
 def create_engine_and_tokenizer_module(
     args: argparse.Namespace,
 ):
-    if args.use_pipelined_engine:
+    if args.use_staging_engine:
         tokenizer_module = HfTokenizerModule(args.model, args.artifact_path)
-        engine = PipelinedInferenceEngine(
+        engine = StagingInferenceEngine(
             tokenizer_module=tokenizer_module,
             model_module_loader=PagedCacheModelModule,
             model_module_loader_kwargs={
@@ -153,7 +153,7 @@ def main(args: argparse.Namespace):
         engine,
     )
 
-    if args.use_pipelined_engine:
+    if args.use_staging_engine:
         engine.stop()
 
     total_num_tokens = sum(
@@ -186,7 +186,7 @@ if __name__ == "__main__":
     parser.add_argument("--local-id", type=str, required=True)
     parser.add_argument("--artifact-path", type=str, default="dist")
     parser.add_argument("--num-shards", type=int, default=1)
-    parser.add_argument("--use-pipelined-engine", action="store_true")
+    parser.add_argument("--use-staging-engine", action="store_true")
     parser.add_argument("--max-num-batched-tokens", type=int, default=-1)
     parser.add_argument("--max-input-len", type=int, default=-1)
     parser.add_argument("--min-decode-steps", type=int, default=32)

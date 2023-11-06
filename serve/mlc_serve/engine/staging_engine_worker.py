@@ -1,5 +1,5 @@
 """
-The worker for PipelinedInferenceEngine
+The worker for StagingInferenceEngine
 """
 
 import logging
@@ -325,7 +325,7 @@ def setup_logging(level):
             "handlers": ["console"],
             "level": level,  # Set the logger's log level to DEBUG
         },
-        "mlc_serve.engine.pipelined_engine_worker": {"level": level},
+        "mlc_serve.engine.staging_engine_worker": {"level": level},
     }
     logging.config.dictConfig(logging_config)
 
@@ -362,7 +362,7 @@ def run_generation_loop_worker(
         should_stop = True
 
     handler_thread = Thread(
-        target=handle_command, name="pipelined-engine-worker-command-handler"
+        target=handle_command, name="staging-engine-worker-command-handler"
     )
     handler_thread.start()
 

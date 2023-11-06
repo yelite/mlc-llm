@@ -17,7 +17,7 @@ from .base import (
     SequenceOutput,
 )
 from .model_module import ModelModule, TokenizerModule
-from .pipelined_engine_worker import (
+from .staging_engine_worker import (
     AddRequestsCommand,
     CancelRequestCommand,
     ShutdownCommand,
@@ -27,7 +27,7 @@ from .pipelined_engine_worker import (
 logger = logging.getLogger(__name__)
 
 
-class PipelinedInferenceEngine(ScopedInferenceEngine):
+class StagingInferenceEngine(ScopedInferenceEngine):
     """
     An implementation of InferenceEngine that offloads the text generation loop to another worker process,
     Text tokens are generated asynchronously from the invocation of `step`. The generation progress could be one step
@@ -77,7 +77,7 @@ class PipelinedInferenceEngine(ScopedInferenceEngine):
         self.worker_process.start()
         if not self.ready_event.wait(timeout=180):
             raise RuntimeError(
-                "PipelinedInferenceEngine worker is not ready before timeout."
+                "StagingInferenceEngine worker is not ready before timeout."
             )
 
     def stop(self):

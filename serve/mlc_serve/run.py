@@ -9,7 +9,7 @@ from mlc_llm import utils
 
 from .api import create_app
 from .engine import AsyncEngineConnector
-from .engine.pipelined_engine import PipelinedInferenceEngine
+from .engine.staging_engine import StagingInferenceEngine
 from .engine.sync_engine import SynchronousInferenceEngine
 from .model.paged_cache_model import HfTokenizerModule, PagedCacheModelModule
 
@@ -33,7 +33,7 @@ def parse_args():
     args.add_argument("--local-id", type=str, required=True)
     args.add_argument("--artifact-path", type=str, default="dist")
     args.add_argument("--num-shards", type=int, default=1)
-    args.add_argument("--use-pipelined-engine", action="store_true")
+    args.add_argument("--use-staging-engine", action="store_true")
     args.add_argument("--max-num-batched-tokens", type=int, default=-1)
     args.add_argument("--max-input-len", type=int, default=-1)
     args.add_argument("--min-decode-steps", type=int, default=12)
@@ -70,8 +70,8 @@ def setup_logging(args):
             "level": level,  # Set the logger's log level to DEBUG
         },
         "mlc_serve.engine.sync_engine": {"level": level},
-        "mlc_serve.engine.pipelined_engine": {"level": level},
-        "mlc_serve.engine.pipelined_engine_worker": {"level": level},
+        "mlc_serve.engine.staging_engine": {"level": level},
+        "mlc_serve.engine.staging_engine_worker": {"level": level},
     }
     logging.config.dictConfig(logging_config)
 
@@ -79,9 +79,9 @@ def setup_logging(args):
 def create_engine(
     args: argparse.Namespace,
 ):
-    if args.use_pipelined_engine:
+    if args.use_staging_engine:
         tokenizer_module = HfTokenizerModule(args.model, args.artifact_path)
-        return PipelinedInferenceEngine(
+        return StagingInferenceEngine(
             tokenizer_module=tokenizer_module,
             model_module_loader=PagedCacheModelModule,
             model_module_loader_kwargs={
