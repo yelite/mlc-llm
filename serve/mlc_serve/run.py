@@ -69,7 +69,9 @@ def setup_logging(args):
             "handlers": ["console"],
             "level": level,  # Set the logger's log level to DEBUG
         },
-        "mlc_serve.engine.local": {"level": level},
+        "mlc_serve.engine.sync_engine": {"level": level},
+        "mlc_serve.engine.pipelined_engine": {"level": level},
+        "mlc_serve.engine.pipelined_engine_worker": {"level": level},
     }
     logging.config.dictConfig(logging_config)
 
