@@ -10,13 +10,7 @@ from threading import Condition, Lock, Thread
 from typing import Callable, Optional, Union
 
 from .base import FinishReason, RequestId, RequestState
-from .model_module import (
-    DecodeRequest,
-    ModelModule,
-    PrefillRequest,
-    SequenceId,
-    TextTokenGeneratorModule,
-)
+from .model_module import DecodeRequest, ModelModule, PrefillRequest, SequenceId
 
 logger = logging.getLogger(__name__)
 
@@ -57,14 +51,15 @@ class GenerationLoopWorkerOutput:
 class GenerationLoopWorker:
     def __init__(
         self,
-        generator_module: TextTokenGeneratorModule,
+        model_module: ModelModule,
         max_batched_tokens: int = 2560,
         min_decode_steps: int = 32,
         max_decode_steps: int = 48,
         prompt_allocate_ratio: float = 2.0,
     ):
-        self.text_generator = generator_module.text_generator
-        self.cache_manager = generator_module.cache_manager
+        self.text_generator = model_module.text_generator
+        self.cache_manager = model_module.cache_manager
+        self.tokenizer = model_module.tokenizer
 
         self.max_batched_tokens = max_batched_tokens
         self.max_decode_steps = min(
@@ -306,15 +301,15 @@ class GenerationLoopWorker:
 
 
 def run_generation_loop_worker(
-    generator_module_loader: Callable[..., TextTokenGeneratorModule],
-    generator_module_loader_kwargs: dict,
+    model_module_loader: Callable[..., ModelModule],
+    model_module_loader_kwargs: dict,
     worker_kwargs: dict,
     command_queue: multiprocessing.Queue,
     result_queue: multiprocessing.Queue,
     ready_event: multiprocessing.Event,
 ):
-    generator_module = generator_module_loader(**generator_module_loader_kwargs)
-    worker = GenerationLoopWorker(generator_module=generator_module, **worker_kwargs)
+    model_module = model_module_loader(**model_module_loader_kwargs)
+    worker = GenerationLoopWorker(model_module=model_module, **worker_kwargs)
 
     should_stop = False
 

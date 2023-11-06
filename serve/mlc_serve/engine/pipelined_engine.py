@@ -16,7 +16,7 @@ from .base import (
     ScopedInferenceEngine,
     SequenceOutput,
 )
-from .model_module import TextTokenGeneratorModule, TokenizerModule
+from .model_module import ModelModule, TokenizerModule
 from .pipelined_engine_worker import (
     AddRequestsCommand,
     CancelRequestCommand,
@@ -38,8 +38,8 @@ class PipelinedInferenceEngine(ScopedInferenceEngine):
     def __init__(
         self,
         tokenizer_module: TokenizerModule,
-        generator_module_loader: Callable[..., TextTokenGeneratorModule],
-        generator_module_loader_kwargs: dict,
+        model_module_loader: Callable[..., ModelModule],
+        model_module_loader_kwargs: dict,
         max_batched_tokens: int = 2560,
         min_decode_steps: int = 32,
         max_decode_steps: int = 48,
@@ -59,8 +59,8 @@ class PipelinedInferenceEngine(ScopedInferenceEngine):
         self.worker_process = self.mp_context.Process(
             target=run_generation_loop_worker,
             args=(
-                generator_module_loader,
-                generator_module_loader_kwargs,
+                model_module_loader,
+                model_module_loader_kwargs,
                 {
                     "max_batched_tokens": max_batched_tokens,
                     "min_decode_steps": min_decode_steps,
@@ -77,7 +77,7 @@ class PipelinedInferenceEngine(ScopedInferenceEngine):
         self.worker_process.start()
         if not self.ready_event.wait(timeout=180):
             raise RuntimeError(
-                "AsyncInferenceEngine worker is not ready before timeout."
+                "PipelinedInferenceEngine worker is not ready before timeout."
             )
 
     def stop(self):

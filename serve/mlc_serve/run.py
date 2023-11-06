@@ -81,8 +81,8 @@ def create_engine(
         tokenizer_module = HfTokenizerModule(args.model, args.artifact_path)
         return PipelinedInferenceEngine(
             tokenizer_module=tokenizer_module,
-            generator_module_loader=PagedCacheModelModule,
-            generator_module_loader_kwargs={
+            model_module_loader=PagedCacheModelModule,
+            model_module_loader_kwargs={
                 "model_name": args.model,
                 "artifact_path": args.artifact_path,
                 "quantization": args.quantization.name,
