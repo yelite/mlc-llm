@@ -126,12 +126,12 @@ class PipelinedInferenceEngine(ScopedInferenceEngine):
     def step(self) -> InferenceStepResult:
         if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
+        with self.requests_lock:
+            if not self.has_pending_requests():
+                return InferenceStepResult([])
 
         if self.next_generation_output is None:
-            try:
-                generation_output = self.result_queue.get_nowait()
-            except queue.Empty:
-                return InferenceStepResult([])
+            generation_output = self.result_queue.get()
         else:
             generation_output = self.next_generation_output
             self.next_generation_output = None
