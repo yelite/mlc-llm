@@ -27,7 +27,7 @@ class AsyncEngineConnector:
         self.engine_loop_exception = None
         self.shutdown_event = asyncio.Event()
         self.result_queues = dict[RequestId, ResultQueue]()
-        self.recent_cancelled_requests = deque(maxlen=64)
+        self.recent_cancelled_requests = deque[RequestId](maxlen=64)
 
     async def start(self):
         """
