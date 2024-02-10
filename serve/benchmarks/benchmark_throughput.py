@@ -130,7 +130,7 @@ def run_mlc(engine, requests, args) -> float:
             [
                 Request(
                     request_id=str(i),
-                    messages=None,  # Provide prompt as `DebugOption` to bypass the conv template
+                    messages=prompt,
                     sampling_params=SamplingParams(
                         temperature=temp,
                         top_p=1 if temp == 0.0 else args.sampling_setting["top_p"],
@@ -148,7 +148,7 @@ def run_mlc(engine, requests, args) -> float:
                     ),
                     num_sequences=args.num_sequences_to_sample,
                     debug_options=DebugOptions(
-                        ignore_eos=args.sampling_setting["ignore_eos"], prompt=prompt
+                        ignore_eos=args.sampling_setting["ignore_eos"]
                     ),
                 )
             ]

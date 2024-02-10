@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from abc import ABC, abstractmethod
 
-from typing import List, Callable, Any, Optional, Dict
+from typing import List, Callable, Any, Optional, Dict, Union
 import inspect
 
 from .sampling_params import SamplingParams, SamplingType
@@ -79,8 +79,6 @@ class ChatMessage:
 @dataclass
 class DebugOptions:
     ignore_eos: bool = False
-    # Override messages with a single prompt, skipping conversation template
-    prompt: Optional[str] = None
     # Overrides prompts, skipping tokenization
     prompt_token_ids: Optional[list[int]] = None
 
@@ -106,18 +104,18 @@ ValidateTokensCallback = Callable[["Request", List[Token]], ValidationError]
 
 @dataclass
 class Request:
+    # Request Id must be unique in one InferenceEngine instance. Duplicate
+    # request ids could cause undefined behavior in the engine, even if they
+    # are not processed at the same time.
     request_id: RequestId
-    messages: List[ChatMessage]
+    # A string `messages` value will be taken as prompt, skipping conversation template
+    messages: Union[List[ChatMessage], str]
     # Number of sequences to generate
     num_sequences: int = 1
-    # TODO: should `best_of` be handled in the serving layer?
-    best_of: Optional[int] = None
     # Options for sampling.
     sampling_params: SamplingParams = field(default_factory=SamplingParams)
     # Options for stopping.
-    stopping_criteria: StoppingCriteria = field(
-        default_factory=lambda: StoppingCriteria()
-    )
+    stopping_criteria: StoppingCriteria = field(default_factory=StoppingCriteria)
     # Options for debugging.
     debug_options: DebugOptions = field(default_factory=DebugOptions)
     # Perform request validation post-tokenization, used by the HTTP layer to control validation.
@@ -126,36 +124,16 @@ class Request:
     contextvars: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        if self.best_of is None:
-            self.best_of = self.num_sequences
         if self.num_sequences < 1:
             raise ValueError(
                 f"num_sequences must be at least 1, got {self.num_sequences}."
             )
-        if self.best_of < self.num_sequences:
-            raise ValueError(
-                f"best_of must be greater than or equal to num_sequences, "
-                f"got n={self.num_sequences} and best_of={self.best_of}."
-            )
-        if (
-            self.best_of > 1
-            and self.sampling_params.sampling_type == SamplingType.GREEDY
-        ):
-            raise ValueError(
-                "best_of must be 1 when using greedy sampling." f"Got {self.best_of}."
-            )
-
         if self.debug_options.prompt_token_ids is not None:
             LOG.warn(
-                f"`debug_options.prompt_token_ids` is provided. This will be used directly and the prompts will be ignored if provided."
+                "`debug_options.prompt_token_ids` is provided. This will be used directly and the prompts will be ignored if provided."
             )
             if not isinstance(self.debug_options.prompt_token_ids, list):
                 raise ValueError("`prompt_token_ids` needs to be list.")
-        else:
-            if self.debug_options.prompt is not None:
-                LOG.warn(
-                    f"`debug_options.prompt` is provided. It will be used instead of `messages`. Conversation template will be skipped."
-                )
 
 
 @dataclass
@@ -200,12 +178,6 @@ class InferenceStepResult:
 
 
 class InferenceEngine(ABC):
-    """
-    Expose the model config to the high-level APIs.
-    """
-
-    model_artifact_config: ModelArtifactConfig
-
     @abstractmethod
     def add(self, requests: list[Request]) -> None:
         """
@@ -214,7 +186,6 @@ class InferenceEngine(ABC):
         Requests will be processed when `step` is called, if there is capacity.
         Requests will be handled on a first-in, first-out basis.
         """
-        ...
 
     @abstractmethod
     def cancel(self, request_id: RequestId) -> None:
@@ -224,14 +195,12 @@ class InferenceEngine(ABC):
         The next call to `step` will return TextGenerationOutput for cancelled requests.
         The output will contain empty delta and finish reason `cancelled`.
         """
-        ...
 
     @abstractmethod
     def has_pending_requests(self) -> bool:
         """
         Check if there is pending requests in the engine.
         """
-        ...
 
     @abstractmethod
     def wait_for_request(self, timeout_seconds=None) -> bool:
@@ -241,7 +210,6 @@ class InferenceEngine(ABC):
         no requests are coming in. The return value is a boolean that indicates whether
         there are requests when it's returned.
         """
-        ...
 
     @abstractmethod
     def step(self) -> InferenceStepResult:
@@ -253,7 +221,6 @@ class InferenceEngine(ABC):
         If the engine has no requests in the queue, `step` will return immediately with
         an empty `InferenceStepResult.outputs`.
         """
-        ...
 
 
 class ScopedInferenceEngine(InferenceEngine):

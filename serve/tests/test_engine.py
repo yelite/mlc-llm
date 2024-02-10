@@ -5,7 +5,6 @@ import random
 from mlc_serve.engine import (
     Request,
     ChatMessage,
-    DebugOptions,
     SamplingParams,
     StoppingCriteria,
     get_engine_config,
@@ -79,12 +78,11 @@ def _test(args: argparse.Namespace):
             [
                 Request(
                     request_id=str(i),
-                    messages=[ChatMessage(role="user", content=prompt)],
+                    messages=prompt,
                     sampling_params=sampling_param,
                     stopping_criteria=StoppingCriteria(
                         max_tokens=args.max_output_len, stop_sequences=None
                     ),
-                    debug_options=DebugOptions(prompt=prompt),
                     num_sequences=num_sequences,
                 )
             ]

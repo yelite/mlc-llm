@@ -43,9 +43,10 @@ def get_new_request_state(
     if request.debug_options.prompt_token_ids is not None:
         prompt_token_ids = request.debug_options.prompt_token_ids
     else:
-        if request.debug_options.prompt is not None:
-            prompt = request.debug_options.prompt
+        if isinstance(request.messages, str):
+            prompt = request.messages
         else:
+            # request.message is List[ChatMessage]
             prompt = conversation_template.apply(request.messages)
 
         prompt_token_ids = tokenizer.encode(prompt)
