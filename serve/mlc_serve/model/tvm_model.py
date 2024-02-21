@@ -579,7 +579,8 @@ def init_tvm_model(
             num_blocks = get_num_cache_blocks(
                 model,
                 block_size,
-                [1] * engine_config.max_num_batched_tokens,
+                engine_config.max_num_batched_tokens,
+                engine_config.max_num_seq,
                 model_artifact_config.num_hidden_layers,
                 num_kv_heads,
                 head_size,
