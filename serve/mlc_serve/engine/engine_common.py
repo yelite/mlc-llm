@@ -407,6 +407,7 @@ class EngineBase:
     model_artifact_config: ModelArtifactConfig
     max_context_length: int
     max_num_batched_tokens: int
+    max_num_seq: int
     max_decode_steps: int
     min_decode_steps: int
     kv_cache_size: int
@@ -428,6 +429,7 @@ class EngineBase:
         ), "max_context_length must not be zero"
         self.max_context_length = self.model_artifact_config.max_context_length
         self.max_num_batched_tokens = model_module.engine_config.max_num_batched_tokens
+        self.max_num_seq = model_module.engine_config.max_num_seq
         self.max_decode_steps = min(
             self.cache_manager.get_kv_cache_size(),
             model_module.engine_config.max_decode_steps,
