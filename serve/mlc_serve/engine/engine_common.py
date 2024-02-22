@@ -596,6 +596,14 @@ class EngineBase:
             )
             return None
 
+        current_num_seq = sum(len(s.generation_sequences) for s in self.current_batch.values())
+        if current_num_seq + len(state.generation_sequences) > self.max_num_seq:
+            LOG.debug(
+                "Stop growing the batch due to max number of sequences.",
+            )
+            return None
+
+
         self.queue.popleft()
         self.cache_manager.allocate(state.request_id, num_tokens, state.num_sequences)
         self.current_batch[state.request_id] = state
