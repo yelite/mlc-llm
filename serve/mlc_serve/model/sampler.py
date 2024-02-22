@@ -479,15 +479,15 @@ def adjust_logits(logits: torch.Tensor, sampling_state: SamplingState, vocab_siz
 
 @dataclass
 class SamplingOutput:
-    next_tokens: list[int]
-    logprob_infos: list[Optional[RawLogprobsInfo]]
+    next_tokens: np.ndarray
+    logprob_infos: List[Optional[RawLogprobsInfo]]
 
 
 def sample(
     logits: torch.Tensor,
     sampling_state: SamplingState,
     check_safety: bool = False,
-) -> SamplingOutput:
+) -> Optional[SamplingOutput]:
     def _is_safe_to_sample(prob_like):
         return (
             torch.sum(torch.isnan(prob_like) | torch.isinf(prob_like) | (prob_like < 0))
@@ -504,21 +504,26 @@ def sample(
     )
 
     next_tokens = np.empty((batch_size,), dtype=np.int64)
+
     if sampling_state.has_greedy:
         res_greedy = torch.argmax(logits[mask_greedy_t], -1)
         np_mask_greedy = mask_greedy_t.cpu().numpy()
         next_tokens[np_mask_greedy] = res_greedy.cpu().numpy()
 
     probs_random = None
+
     if sampling_state.has_random:
         probs_random = torch.softmax(logits[mask_random_t], dim=-1)
+
         if check_safety and not _is_safe_to_sample(probs_random):
             return None
+
         res_random = torch.multinomial(probs_random, 1, True)[:, 0]
         np_mask_random = mask_random_t.cpu().numpy()
         next_tokens[np_mask_random] = res_random.cpu().numpy()
 
     logprob_infos: List[Optional[RawLogprobsInfo]] = [None] * batch_size
+
     if sampling_state.has_logprob:
         # If everything is random sampling, save one extra softmax
         if not sampling_state.has_greedy:
@@ -535,6 +540,7 @@ def sample(
         mask = sampling_state.sampling_tensors.mask_top_logprob
         top_tokens = all_top_tokens[mask]
         top_logprobs = all_top_logprobs[mask]
+
         for idx, batch_idx in enumerate(sampling_state.logprob_batch_indices):
             next_token = next_tokens[batch_idx]
             assert sampling_state.sampling_params[batch_idx].logprobs

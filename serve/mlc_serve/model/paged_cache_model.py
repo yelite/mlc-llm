@@ -5,6 +5,7 @@ from typing import Sequence, List
 from .base import ModelArtifactConfig
 from .paged_cache_manager import CacheManager
 from .tokenizer import HfTokenizerModule, ConversationTemplate, Tokenizer
+from .torch_model import init_torch_model
 from .tvm_model import init_tvm_model
 
 from ..engine import MLCServeEngineConfig
@@ -81,15 +82,22 @@ class PagedCacheModelModule:
         engine_config: MLCServeEngineConfig,
         model_artifact_config: ModelArtifactConfig
     ):
-        # TODO(masahi): Make the model type configurable.
-        model, cache_manager = init_tvm_model(model_artifact_config, engine_config)
+        if engine_config.model_type == "tvm":
+            model, cache_manager = init_tvm_model(model_artifact_config, engine_config)
+            tokenizer_module = HfTokenizerModule(model_artifact_path.joinpath("model"))
+        elif engine_config.model_type == "torch":
+            model, cache_manager = init_torch_model(
+                model_artifact_path, engine_config
+            )
+            tokenizer_module = HfTokenizerModule(model_artifact_path)
+        else:
+            raise RuntimeError(f"Unknown model type {engine_config.model_type}")
 
         self.engine_config = engine_config
         self.model_artifact_config = model_artifact_config
         self.text_generator = PagedCacheModelTextGenerator(model)
         self.cache_manager = cache_manager
 
-        tokenizer_module = HfTokenizerModule(model_artifact_path)
         self.tokenizer = tokenizer_module.tokenizer
         self.conversation_template = tokenizer_module.conversation_template
 
