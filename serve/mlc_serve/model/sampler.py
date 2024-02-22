@@ -172,8 +172,6 @@ class SamplingTensors:
             device="cpu",
             pin_memory=True,
         )
-        # Convert 1-based index to 0-based
-        logit_bias_indices -= 1
         logit_bias_values = torch.tensor(
             list_logit_bias_values,
             dtype=dtype,
@@ -546,8 +544,8 @@ def sample(
             assert sampling_state.sampling_params[batch_idx].logprobs
             top_k = sampling_state.sampling_params[batch_idx].top_logprobs
             logprob_infos[batch_idx] = RawLogprobsInfo(
-                current_token_id=next_token,
-                current_logprob=logprobs[batch_idx][next_token],
+                current_token_id=int(next_token),
+                current_logprob=float(logprobs[batch_idx][next_token]),
                 top_token_ids=top_tokens[idx][:top_k],
                 top_logprobs=top_logprobs[idx][:top_k],
             )

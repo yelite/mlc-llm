@@ -88,6 +88,8 @@ class SamplingParams:
             self._verify_greedy_sampling()
         if not self.logprobs:
             self.top_logprobs = 0
+        if self.top_k == -1:
+            self.top_k = self.vocab_size
 
     def verify(self) -> None:
         if not -2.0 <= self.presence_penalty <= 2.0:
@@ -99,15 +101,15 @@ class SamplingParams:
                 "frequency_penalty must be in [-2, 2], got "
                 f"{self.frequency_penalty}."
             )
-        if self.temperature < 0.0:
+        if not 0.0 <= self.temperature <= 2.0:
             raise ValueError(
-                f"temperature must be non-negative, got {self.temperature}."
+                f"temperature must be in [0, 2], got {self.temperature}."
             )
         if not 0.0 < self.top_p <= 1.0:
             raise ValueError(f"top_p must be in (0, 1], got {self.top_p}.")
 
         if not isinstance(self.top_k, int):
-            raise ValueError(f"top_k must be integer.")
+            raise TypeError(f"top_k must be integer.")
 
         if self.top_k < -1 or self.top_k == 0:
             raise ValueError(
@@ -119,8 +121,10 @@ class SamplingParams:
                     raise ValueError(
                         f"logit bias must be in [-100, 100], got {bias} for token {token}."
                     )
-                if not 1 <= token <= self.vocab_size:
-                    raise ValueError(f"token id must be in [1, vocab_size]")
+                if not isinstance(token, int):
+                    raise ValueError(f"token id must be an integer")
+                if not 0 <= token < self.vocab_size:
+                    raise ValueError(f"token id must be in [0, vocab_size)")
 
         if self.repetition_penalty <= 0:
             raise ValueError(
@@ -131,6 +135,10 @@ class SamplingParams:
             if self.top_logprobs < 0 or self.top_logprobs > LOGPROB_TOP_K_MAX:
                 raise ValueError(
                     f"top_logprobs must be between 0 and {LOGPROB_TOP_K_MAX}, got {self.top_logprobs}."
+                )
+            if not isinstance(self.top_logprobs, int):
+                raise TypeError(
+                    "top_logprobs must be integer"
                 )
 
     def _verify_greedy_sampling(self) -> None:
