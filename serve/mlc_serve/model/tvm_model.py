@@ -162,7 +162,7 @@ class Model:
         self.num_shards = config.num_shards
 
         # TODO(@sunggg): Find a better way
-        if config.model_type in ["llama", "mistral", "mixtral"]:
+        if config.model_type in ["llama", "mistral", "mixtral", "gemma"]:
             self.torch_dtype = torch.float32
         else:
             assert 0, f"{config.model_type} is NOT supported yet"
@@ -253,7 +253,9 @@ class Model:
 
         vm_alloc_after = self.get_used_memory()
 
-        LOG.info(f"peak memory during profling: {(vm_alloc_after - vm_alloc_before) / 1e9} GB")
+        LOG.info(
+            f"peak memory during profling: {(vm_alloc_after - vm_alloc_before) / 1e9} GB"
+        )
 
         return self.get_param_nbytes() + (vm_alloc_after - vm_alloc_before)
 
@@ -561,9 +563,7 @@ def init_tvm_model(
     num_kv_heads = (
         model_artifact_config.num_key_value_heads // model_artifact_config.num_shards
     )
-    head_size = (
-        model_artifact_config.hidden_size // model_artifact_config.num_attention_heads
-    )
+    head_size = model_artifact_config.head_dim
 
     if model_artifact_config.paged_kv_cache_type == "flash-decoding":
         allocate_func_name = "tvm.contrib.flash_attn.allocate_kv_cache"
