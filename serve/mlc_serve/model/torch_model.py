@@ -187,6 +187,7 @@ def profile_and_init_cache(
             hf_config.num_hidden_layers,
             num_kv_heads,
             head_size,
+            gpu_memory_utilization=0.9,
         )
     else:
         num_blocks = 500

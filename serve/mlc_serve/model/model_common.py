@@ -35,7 +35,7 @@ def get_num_cache_blocks(
     num_layers,
     num_kv_heads,
     head_size,
-    gpu_memory_utilization=0.9,  # the default used by vllm
+    gpu_memory_utilization,
 ):
     cache_block_size = CacheManager.get_cache_block_size(
         block_size, num_layers, num_kv_heads, head_size
