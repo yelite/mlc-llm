@@ -30,8 +30,10 @@ def get_default_mlc_serve_argparser(description="", allow_override=False):
     parser.add_argument("--use-sync-engine", action="store_true")
     parser.add_argument("--num-sequences-to-sample", type=int, default=1)
     parser.add_argument("--max-num-batched-tokens", type=int, default=4096)
+    parser.add_argument("--max-num-seq", type=int, default=256)
     parser.add_argument("--min-decode-steps", type=int, default=32)
     parser.add_argument("--max-decode-steps", type=int, default=56)
+    parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     parser.add_argument("--debug-logging", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--num-shards", type=int, default=1)  # Needed for PT models
@@ -73,10 +75,12 @@ def create_mlc_engine(args: argparse.Namespace, start_engine=True) -> InferenceE
         {
             "use_staging_engine": args.use_staging_engine,
             "max_num_batched_tokens": args.max_num_batched_tokens,
+            "max_num_seq": args.max_num_seq,
             "min_decode_steps": args.min_decode_steps,
             "max_decode_steps": args.max_decode_steps,
             "model_type": model_type,
             "num_shards": num_shards,
+            "gpu_memory_utilization": args.gpu_memory_utilization,
         }
     )
 

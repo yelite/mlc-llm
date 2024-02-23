@@ -405,6 +405,8 @@ class EngineBase:
     model_artifact_config: ModelArtifactConfig
     max_context_length: int
     max_num_batched_tokens: int
+    max_num_seq: int
+    max_num_seq_per_request: int
     max_decode_steps: int
     min_decode_steps: int
     kv_cache_size: int
@@ -426,6 +428,10 @@ class EngineBase:
         ), "max_context_length must not be zero"
         self.max_context_length = self.model_artifact_config.max_context_length
         self.max_num_batched_tokens = model_module.engine_config.max_num_batched_tokens
+        self.max_num_seq = model_module.engine_config.max_num_seq
+        self.max_num_seq_per_request = model_module.engine_config.max_num_seq_per_request
+        if self.max_num_seq_per_request is None:
+            self.max_num_seq_per_request = self.max_num_seq // 4
         self.max_decode_steps = min(
             self.cache_manager.get_kv_cache_size(),
             model_module.engine_config.max_decode_steps,
@@ -591,6 +597,14 @@ class EngineBase:
                 num_tokens,
             )
             return None
+
+        current_num_seq = sum(len(s.generation_sequences) for s in self.current_batch.values())
+        if current_num_seq + len(state.generation_sequences) > self.max_num_seq:
+            LOG.debug(
+                "Stop growing the batch due to max number of sequences.",
+            )
+            return None
+
 
         self.queue.popleft()
         self.cache_manager.allocate(state.request_id, num_tokens, state.num_sequences)

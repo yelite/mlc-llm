@@ -588,7 +588,12 @@ def init_tvm_model(
     if engine_config.max_num_batched_tokens > 0:
         LOG.info("Running memory profiling.")
         try:
-            seq_lens = [1] * engine_config.max_num_batched_tokens
+            max_num_seq = engine_config.max_num_seq
+            max_num_batched_tokens = engine_config.max_num_batched_tokens
+            seq_len = max_num_batched_tokens // max_num_seq
+            seq_lens = [seq_len] * max_num_seq
+            seq_lens[-1] += max_num_batched_tokens % max_num_seq
+
             used_memory_bytes = model.profile_memory_usage(seq_lens)
             num_blocks = get_num_cache_blocks(
                 used_memory_bytes,
@@ -596,6 +601,7 @@ def init_tvm_model(
                 model_artifact_config.num_hidden_layers,
                 num_kv_heads,
                 head_size,
+                engine_config.gpu_memory_utilization,
             )
         except tvm.error.InternalError:
             raise RuntimeError(

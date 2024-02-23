@@ -168,6 +168,8 @@ def profile_and_init_cache(
     hf_config,
     num_shards,
     max_num_batched_tokens,
+    max_num_seq,
+    gpu_memory_utilization,
 ):
     num_kv_heads = hf_config.num_key_value_heads // num_shards
     num_hidden_layers = hf_config.num_hidden_layers
@@ -177,7 +179,9 @@ def profile_and_init_cache(
 
     if max_num_batched_tokens > 0:
         LOG.info("Running memory profiling.")
-        seq_lens = [1] * max_num_batched_tokens
+        seq_len = max_num_batched_tokens // max_num_seq
+        seq_lens = [seq_len] * max_num_seq
+        seq_lens[-1] += max_num_batched_tokens % max_num_seq
         used_memory_bytes = profile_memory_usage(
             pt_model, seq_lens, num_hidden_layers, hf_config.vocab_size
         )
@@ -187,6 +191,7 @@ def profile_and_init_cache(
             hf_config.num_hidden_layers,
             num_kv_heads,
             head_size,
+            gpu_memory_utilization,
         )
     else:
         num_blocks = 500
@@ -423,6 +428,8 @@ if support_torch_model:
                 hf_config,
                 num_shards,
                 engine_config.max_num_batched_tokens,
+                engine_config.max_num_seq,
+                engine_config.gpu_memory_utilization,
             )
 
             return num_blocks
@@ -593,6 +600,8 @@ class Model:
                 hf_config,
                 1,
                 engine_config.max_num_batched_tokens,
+                engine_config.max_num_seq,
+                engine_config.gpu_memory_utilization,
             )
             self.model_rpc = None
 
