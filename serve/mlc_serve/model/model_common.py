@@ -30,14 +30,14 @@ def get_gpu_memory(gpu: int = 0) -> int:
 
 
 def get_num_cache_blocks(
-    model,
+    used_memory_bytes,
     block_size,
     max_num_batched_tokens,
     max_num_seq,
     num_layers,
     num_kv_heads,
     head_size,
-    gpu_memory_utilization=0.9,  # the default used by vllm
+    gpu_memory_utilization,
 ):
     seq_len = max_num_batched_tokens // max_num_seq
     seq_lens = [seq_len] * max_num_seq
@@ -90,7 +90,6 @@ def sample_from_logits(
     requests: Sequence[RequestType],
     sampling_state: SamplingState,
     vocab_size: int,
-    copy_stream: torch.cuda.Stream,
     torch_dtype: torch.dtype,
     torch_dev: str,
     past_decode_tokens: List[List[int]],
@@ -98,13 +97,10 @@ def sample_from_logits(
 ) -> List[TextGenerationResult]:
     batch_size = logits.shape[0]
     assert batch_size == len(requests)
+
     # Convert to torch tensors if logits are in tvm ndarray
     if isinstance(logits, tvm.nd.NDArray):
         logits = torch.from_dlpack(logits)
-
-    # synchronization point for sampling tensors
-    # wait until all the tensors are loaded on GPU
-    torch.cuda.current_stream().wait_stream(copy_stream)
 
     # Logit processing for constraint sampling e.g., JSON Mode
     for i, (sequence_id, request) in enumerate(zip(sequence_ids, requests)):
@@ -145,6 +141,7 @@ def sample_from_logits(
             " or element < 0"
         )
         logits = torch.from_dlpack(logits)
+
         for i in range(batch_size):
             sequence_id = sequence_ids[i]
             logits_per_token = logits[i]
@@ -154,16 +151,14 @@ def sample_from_logits(
             # NOTE: Rerun the preparation for simplicity.
             # Assume this code path is taken rarely and the recomputation overhead is
             # marginal.
-            with torch.cuda.stream(copy_stream):
-                new_sampling_state = SamplingState.from_sampling_params(
-                    [sampling_param],
-                    [past_decode_tokens_per_request],
-                    [prompt_mask],
-                    torch_dtype,
-                    torch_dev,
-                    vocab_size,
-                )
-            torch.cuda.current_stream().wait_stream(copy_stream)
+            new_sampling_state = SamplingState.from_sampling_params(
+                [sampling_param],
+                [past_decode_tokens_per_request],
+                [prompt_mask],
+                torch_dtype,
+                torch_dev,
+                vocab_size,
+            )
             maybe_sampling_output: Optional[SamplingOutput] = sample(
                 torch.unsqueeze(logits_per_token, 0),
                 new_sampling_state,
@@ -174,6 +169,7 @@ def sample_from_logits(
             logprob_info = maybe_sampling_output.logprob_infos[0]
             # Valid sample
             request = requests[i]
+
             if maybe_sampling_output is not None:
                 outputs.extend(
                     prepare_textgen_result(
@@ -205,24 +201,39 @@ def prepare_inputs(
     all_decode_block_tables,
     sliding_window,
     is_prefill,
+    block_size,
     num_decode_query_tokens=1,
+    for_vllm=False,
 ):
+    if for_vllm:
+        torch_int_dtype = torch.long
+    else:
+        torch_int_dtype = torch.int
+
     block_tables = []
     seq_lens = []
     input_ids = []
     slot_mapping = []
     positions = []
-    max_num_blocks_per_seq = 0
     indices_within_window = []
     start_idx = 0
+    max_prompt_len = -1
+    max_context_len = -1
 
     for i, (sequence_id, token_ids) in enumerate(zip(sequence_ids, all_token_ids)):
         if is_prefill:
-            input_ids += token_ids
             prompt_len = len(token_ids)
             seq_lens.append(prompt_len)
-            positions += range(prompt_len)
-            slot_mapping += all_slot_mappings[sequence_id]
+            max_prompt_len = max(max_prompt_len, prompt_len)
+
+            if for_vllm:
+                input_ids.append(token_ids)
+                positions.append(list(range(prompt_len)))
+                slot_mapping.append(all_slot_mappings[sequence_id])
+            else:
+                input_ids += token_ids
+                positions += range(prompt_len)
+                slot_mapping += all_slot_mappings[sequence_id]
 
             if sliding_window:
                 indices_within_window += range(
@@ -233,15 +244,21 @@ def prepare_inputs(
 
         else:
             seq_len = prompt_lens[i] + len(token_ids)
-            input_ids += token_ids[-num_decode_query_tokens:]
 
-            for i in range(num_decode_query_tokens):
-                positions.append(seq_len - (num_decode_query_tokens - i))
+            if for_vllm:
+                assert num_decode_query_tokens == 1
+                input_ids.append([token_ids[-1]])
+                positions.append([seq_len - 1])
+                slot_mapping.append([all_slot_mappings[sequence_id][-1]])
+            else:
+                input_ids += token_ids[-num_decode_query_tokens:]
 
-            slot_mapping += all_slot_mappings[sequence_id][-num_decode_query_tokens:]
+                for i in range(num_decode_query_tokens):
+                    positions.append(seq_len - (num_decode_query_tokens - i))
+
+                slot_mapping += all_slot_mappings[sequence_id][-num_decode_query_tokens:]
 
             block_table = all_decode_block_tables[sequence_id]
-            max_num_blocks_per_seq = max(max_num_blocks_per_seq, len(block_table))
             block_tables.append(block_table.get_blocks())
 
             if sliding_window:
@@ -249,13 +266,31 @@ def prepare_inputs(
             else:
                 seq_lens.append(seq_len)
 
+            max_context_len = max(max_context_len, seq_lens[-1])
+
+    def _do_pad(
+        x: List[List[int]],
+        max_len: int,
+        pad_val: int,
+    ) -> List[List[int]]:
+        def _pad_to_max(x: List[int], max_len: int, pad_val: int) -> List[int]:
+            assert len(x) <= max_len
+            return x + [pad_val] * (max_len - len(x))
+
+        return [_pad_to_max(x_i, max_len, pad_val) for x_i in x]
+
+    if for_vllm and is_prefill:
+        input_ids = _do_pad(input_ids, max_prompt_len, 0)
+        positions = _do_pad(positions, max_prompt_len, 0)
+        slot_mapping = _do_pad(slot_mapping, max_prompt_len, -1)
+
     def to_torch(arr, torch_dtype):
         return torch.tensor(arr, dtype=torch_dtype, device="cuda")
 
-    input_ids = to_torch(input_ids, torch.int)
-    positions = to_torch(positions, torch.int)
+    input_ids = to_torch(input_ids, torch_int_dtype)
+    positions = to_torch(positions, torch_int_dtype)
     seq_lens = to_torch(seq_lens, torch.int)
-    slot_mapping = to_torch(slot_mapping, torch.int)
+    slot_mapping = to_torch(slot_mapping, torch_int_dtype)
 
     if is_prefill and sliding_window:
         indices_within_window = to_torch(indices_within_window, torch.int)
@@ -263,14 +298,11 @@ def prepare_inputs(
         indices_within_window = None
 
     if not is_prefill:
+        max_block_table_len = (
+            max_context_len + block_size - 1
+        ) // block_size
 
-        def _pad_to_max(x: List[int], max_len: int) -> List[int]:
-            return x + [0] * (max_len - len(x))
-
-        padded_block_tables = [
-            _pad_to_max(block_table, max_num_blocks_per_seq)
-            for block_table in block_tables
-        ]
+        padded_block_tables = _do_pad(block_tables, max_block_table_len, 0)
         block_tables = to_torch(padded_block_tables, torch.int)
     else:
         block_tables = None

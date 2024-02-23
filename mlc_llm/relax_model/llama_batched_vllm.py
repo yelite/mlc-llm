@@ -19,6 +19,7 @@ from .param_manager import ParamManager
 from .llama import (
     LlamaConfig,
     MixtralConfig,
+    GemmaConfig,
     Linear,
     Embedding,
     LlamaRMSNorm,
@@ -492,6 +493,7 @@ class LlamaModel(nn.Module):
         kv_type: KVCacheType,
         sep_embed: bool = False,
     ):
+        self.config = config
         self.padding_idx = config.pad_token_id
         self.embed_tokens = None
 
@@ -501,7 +503,12 @@ class LlamaModel(nn.Module):
         self.layers = ModuleList(
             [LlamaDecoderLayerBatched(config, kv_type) for _ in range(config.num_hidden_layers)]
         )
-        self.norm = LlamaRMSNorm(config.hidden_size, dtype=config.dtype, eps=config.rms_norm_eps)
+        self.norm = LlamaRMSNorm(
+            config.hidden_size,
+            dtype=config.dtype,
+            eps=config.rms_norm_eps,
+            weight_offset=config.rms_norm_weight_offset,
+        )
 
     def forward(
         self,
@@ -518,6 +525,9 @@ class LlamaModel(nn.Module):
             inputs_embeds = inputs
 
         hidden_states = inputs_embeds
+
+        if isinstance(self.config, GemmaConfig):
+            hidden_states = nn.emit(hidden_states * relax.const(self.config.hidden_size**0.5, dtype="float16"))
 
         new_kvs = ()
 
@@ -551,11 +561,19 @@ class LlamaForCausalLM(nn.Module):
         self.num_shards = config.num_shards
         self.cpu_device = cpu_device
         self.model = LlamaModel(config, vocab_size_var, kv_type, sep_embed)
-        self.lm_head = Linear(config.hidden_size, vocab_size_var, dtype=config.dtype, bias=False)
+
+        if isinstance(config, GemmaConfig):
+            assert self.model.embed_tokens is not None
+            self.lm_head = lambda hidden: nn.emit(relax.op.linear(hidden, self.model.embed_tokens.weight))
+        else:
+            self.lm_head = Linear(config.hidden_size, vocab_size_var, dtype=config.dtype, bias=False)
 
         ############ Rotary embedding constants ############
-        assert config.hidden_size % config.num_attention_heads == 0
-        head_dim = config.hidden_size // config.num_attention_heads
+        if hasattr(config, "head_dim"):
+            head_dim = config.head_dim
+        else:
+            assert config.hidden_size % config.num_attention_heads == 0
+            head_dim = config.hidden_size // config.num_attention_heads
 
         # Set the cached sin/cos to the maximum of 2048 and max seq len.
         # This will be eliminated further with online rotary embedding calculation.
@@ -703,7 +721,11 @@ def get_inputs(
         num_blocks = tvm.tir.Var("num_blocks", "int64")
 
         num_key_value_heads = config.get_num_key_value_heads() // config.num_shards
-        head_size = hidden_size // config.num_attention_heads
+
+        if hasattr(config, "head_dim"):
+            head_size = config.head_dim
+        else:
+            head_size = config.hidden_size // config.num_attention_heads
 
         if kv_type == KVCacheType.VLLM:
             block_size = VllmAttention.block_size
@@ -1041,6 +1063,16 @@ def get_model(args, hf_config):
             num_shards=args.num_shards,
             build_model_only=args.build_model_only,
             quantization_scheme=args.quantization,
+        )
+    elif "gemma" in args.model.lower():
+        config = GemmaConfig(
+            **hf_config,
+            dtype=dtype,
+            max_sequence_length=hf_config["max_position_embeddings"],
+            position_embedding_base=position_embedding_base,
+            combine_matmul=True,
+            num_shards=args.num_shards,
+            build_model_only=args.build_model_only,
         )
     elif "max_sequence_length" in hf_config:
         config = LlamaConfig(

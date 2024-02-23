@@ -36,6 +36,9 @@ class MLCServeEngineConfig:
     min_decode_steps: int = 32
     max_decode_steps: int = 48
     init_timeout: int = 120
+    model_type: str = "tvm"  # "tvm", "torch"
+    num_shards: Optional[int] = None  # Need to be specified for if model_type is "torch"
+    gpu_memory_utilization: float = 0.9
 
     @classmethod
     def _from_json(config_cls, json_obj: Dict[Any, Any]):
@@ -58,6 +61,11 @@ def get_engine_config(dict_config):
     assert isinstance(engine_config.min_decode_steps, int)
     assert (engine_config.min_decode_steps > 0) and (engine_config.max_decode_steps > 0)
     assert engine_config.max_decode_steps > engine_config.min_decode_steps
+
+    if engine_config.model_type == "torch":
+        assert (
+            engine_config.num_shards is not None
+        ), "num_shards in MLCServeEngineConfig needs to be provided for PT models."
 
     return engine_config
 

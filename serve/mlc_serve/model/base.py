@@ -1,5 +1,8 @@
+from transformers import AutoConfig
+
 from dataclasses import dataclass
 from typing import Optional
+from pathlib import Path
 import os
 import json
 import inspect
@@ -22,6 +25,7 @@ class ModelArtifactConfig:
     num_attention_heads: Optional[int] = None
     num_hidden_layers: Optional[int] = None
     hidden_size: Optional[int] = None
+    head_dim: Optional[int] = None
 
     @classmethod
     def _from_json(config_cls, json_obj: dict):
@@ -37,14 +41,16 @@ class ModelArtifactConfig:
 class AssetNotFound(Exception):
     def __init__(self, asset_path):
         self.asset_path = asset_path
-        super().__init__(f"{self.asset_path} should exist. Did you build with `--enable-batching`?")
+        super().__init__(
+            f"{self.asset_path} should exist. Did you build with `--enable-batching`?"
+        )
 
 
 def get_model_artifact_config(model_artifact_path):
     json_object = {"model_artifact_path": model_artifact_path}
     for config_file_name in [
         "build_config.json",
-        "model/mlc-model-config.json"
+        "model/mlc-model-config.json",
     ]:
         config_file_path = os.path.join(model_artifact_path, config_file_name)
         if not os.path.exists(config_file_path):
@@ -56,4 +62,23 @@ def get_model_artifact_config(model_artifact_path):
     if not "paged_kv_cache_type" in json_object:
         json_object["paged_kv_cache_type"] = "vllm"
 
-    return ModelArtifactConfig._from_json(json_object)
+    config = ModelArtifactConfig._from_json(json_object)
+
+    if config.head_dim is None:
+        config.head_dim = config.hidden_size // config.num_attention_heads
+
+    return config
+
+
+def get_hf_config(model_path: Path) -> AutoConfig:
+    hf_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+
+    if not hasattr(hf_config, "num_key_value_heads") and hasattr(
+        hf_config, "num_attention_heads"
+    ):
+        hf_config.num_key_value_heads = hf_config.num_attention_heads
+
+    if not hasattr(hf_config, "sliding_window"):
+        hf_config.sliding_window = None
+
+    return hf_config

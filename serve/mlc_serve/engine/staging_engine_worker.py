@@ -364,7 +364,7 @@ def run_generation_loop_worker(
 
     try:
         model_module = model_module_loader(**model_module_loader_kwargs)
-        LOG.info("Model is initalized.")
+        LOG.info("Model is initialized.")
         worker = GenerationLoopWorker(model_module=model_module)
     except:
         LOG.exception("An error raised in model initialization.")
@@ -376,6 +376,7 @@ def run_generation_loop_worker(
         while True:
             cmd = command_queue.get()
             if isinstance(cmd, ShutdownCommand):
+                del worker.text_generator
                 break
             elif isinstance(cmd, AddRequestsCommand):
                 worker.add(cmd.request_states)

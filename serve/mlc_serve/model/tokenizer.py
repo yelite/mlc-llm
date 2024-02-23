@@ -1,7 +1,10 @@
+import structlog
 from typing import List
 from transformers import AutoTokenizer
 from ..engine import ChatMessage
 from pathlib import Path
+
+LOG = structlog.stdlib.get_logger(__name__)
 
 
 class Tokenizer:
@@ -46,11 +49,17 @@ class ConversationTemplate:
 
 
 class HfTokenizerModule:
-    def __init__(self, model_artifact_path: Path):
+    def __init__(self, tokenizer_path: Path):
         hf_tokenizer = AutoTokenizer.from_pretrained(
-            model_artifact_path.joinpath("model"),
-            revision=None, tokenizer_revision=None,
-            trust_remote_code=False,
+            tokenizer_path,
+            trust_remote_code=True,
+            revision=None,
+            tokenizer_revision=None,
         )
         self.tokenizer = Tokenizer(hf_tokenizer)
         self.conversation_template = ConversationTemplate(hf_tokenizer)
+
+        if not self.tokenizer.is_fast:
+            LOG.warn("tokenizer.is_fast is false. Some models using an external tokenizer package, "
+                     "such as QWen, might hit this condition but that does not imply that their "
+                     "tokenizers are slow.")
