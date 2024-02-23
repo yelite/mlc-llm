@@ -32,18 +32,11 @@ def get_gpu_memory(gpu: int = 0) -> int:
 def get_num_cache_blocks(
     used_memory_bytes,
     block_size,
-    max_num_batched_tokens,
-    max_num_seq,
     num_layers,
     num_kv_heads,
     head_size,
     gpu_memory_utilization,
 ):
-    seq_len = max_num_batched_tokens // max_num_seq
-    seq_lens = [seq_len] * max_num_seq
-    seq_lens[-1] += max_num_batched_tokens % max_num_seq
-
-    used_memory_bytes = model.profile_memory_usage(seq_lens)
     cache_block_size = CacheManager.get_cache_block_size(
         block_size, num_layers, num_kv_heads, head_size
     )
