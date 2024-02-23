@@ -32,6 +32,7 @@ class MLCServeEngineConfig:
     use_staging_engine: bool = True
     max_num_batched_tokens: int = 4096
     max_num_seq: int = 256
+    max_num_seq_per_request: Optional[int] = None # default to `max_num_seq / 4`
     min_decode_steps: int = 32
     max_decode_steps: int = 48
     init_timeout: int = 120

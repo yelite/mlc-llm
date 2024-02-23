@@ -113,6 +113,12 @@ class GenerationLoopWorker(EngineBase):
                             "The prompt is too long for the given set of engine"
                             " parameters."
                         )
+                elif state.num_sequences > self.max_num_seq_per_request:
+                    self.cancelled_requests.append(state)
+                    state.validation_err = ValidationError(
+                        f"The number of sequences ({state.num_sequences}) is greater"
+                        f"than the maximum allowed value ({self.max_num_seq_per_request})"
+                    )
                 else:
                     valid_states.append(state)
 

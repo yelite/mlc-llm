@@ -408,6 +408,7 @@ class EngineBase:
     max_context_length: int
     max_num_batched_tokens: int
     max_num_seq: int
+    max_num_seq_per_request: int
     max_decode_steps: int
     min_decode_steps: int
     kv_cache_size: int
@@ -430,6 +431,9 @@ class EngineBase:
         self.max_context_length = self.model_artifact_config.max_context_length
         self.max_num_batched_tokens = model_module.engine_config.max_num_batched_tokens
         self.max_num_seq = model_module.engine_config.max_num_seq
+        self.max_num_seq_per_request = model_module.engine_config.max_num_seq_per_request
+        if self.max_num_seq_per_request is None:
+            self.max_num_seq_per_request = self.max_num_seq // 4
         self.max_decode_steps = min(
             self.cache_manager.get_kv_cache_size(),
             model_module.engine_config.max_decode_steps,
