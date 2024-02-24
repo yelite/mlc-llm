@@ -146,7 +146,7 @@ class SynchronousInferenceEngine(InferenceEngine, EngineBase):
             return InferenceStepResult(outputs)
 
         requests, _, _ = get_requests_to_process(
-            list(self.current_batch.values()), self.cache_manager, self.tokenizer
+            list(self.current_batch.values()), self.cache_manager, self.regex_fsm_cache, self.tokenizer
         )
         results = self.text_generator.generate(requests, self.cache_manager.get_cache())
         logger.debug("Finished text generation.")

@@ -95,15 +95,17 @@ def sample_from_logits(
     if isinstance(logits, tvm.nd.NDArray):
         logits = torch.from_dlpack(logits)
 
-    # Logit processing for constraint sampling e.g., JSON Mode
-    for i, (sequence_id, request) in enumerate(zip(sequence_ids, requests)):
-        if request.sampling_params.logits_processor is not None:
-            cs_input_ids = (
-                request.token_ids if isinstance(request, DecodeRequest) else []
-            )
-            logits[i] = request.sampling_params.logits_processor(
-                sequence_id, cs_input_ids, logits[i]
-            )
+    # JSON Mode, compute next logits before sampling
+    has_regex = any(req.sampling_params.regex_fsm is not None for req in requests)
+    if has_regex:
+        allowed_mask = torch.empty_like(logits[0], dtype=torch.bool)
+        for i, req in enumerate(requests):
+            if req.sampling_params.regex_fsm is not None:
+                allowed_mask.zero_()
+                allowed_mask[
+                    req.sampling_params.regex_fsm.allowed_token_ids(req.sampling_params.regex_fsm_state)
+                ] = 1
+                logits[i].masked_fill_(~allowed_mask, float("-inf"))
 
     logits = adjust_logits(logits, sampling_state, vocab_size)
     outputs: List[TextGenerationResult] = []
@@ -113,6 +115,15 @@ def sample_from_logits(
             logits,
             sampling_state,
         )
+
+        # JSON Mode, compute next state in FSM cache after sampling
+        if has_regex:
+            batch_next_token_ids_cpu = sampling_output.next_tokens
+            for i, req in enumerate(requests):
+                if req.sampling_params.regex_fsm is not None:
+                    req.sampling_params.regex_fsm_state = req.sampling_params.regex_fsm.next_state(
+                        req.sampling_params.regex_fsm_state, batch_next_token_ids_cpu[i]
+                    )
 
         for i, (new_token, logprob_info) in enumerate(
             zip(sampling_output.next_tokens, sampling_output.logprob_infos)

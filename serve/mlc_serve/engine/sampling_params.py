@@ -8,6 +8,8 @@ from enum import IntEnum
 from functools import cached_property
 from typing import Dict, Optional, Any
 
+from .constrained import RegexFSM
+
 _SAMPLING_EPS = 1e-5
 LOGPROB_TOP_K_MAX = 5
 
@@ -74,7 +76,8 @@ class SamplingParams:
     # check in `_verify_args` without this field. Follow-up when we have a better idea.
     vocab_size: int = 32000
     json_schema: Optional[Dict[str, Any]] = None
-    logits_processor: Optional[Any] = None
+    regex_fsm: Optional[RegexFSM] = None
+    regex_fsm_state: int = 0
 
     def __post_init__(self):
         if self.logit_bias:
