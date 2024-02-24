@@ -4,9 +4,11 @@ Common utilites for engine classes.
 
 import torch
 import time
+import json
 from typing import Tuple, Deque, Dict, Optional, Callable, List
 from collections import deque
 from threading import Condition, Lock
+from pathlib import Path
 
 import structlog
 
@@ -33,7 +35,8 @@ from .model_module import (
 )
 from ..model.base import ModelArtifactConfig
 from ..openai_logprob_protocol import LogprobsContent, TopLogprobs
-from .constrained_sampling import JSONLogitsProcessor
+from .constrained.fsm_cache import FSMCache
+from .constrained import build_regex_from_schema
 
 LOG = structlog.stdlib.get_logger(__name__)
 
@@ -257,6 +260,7 @@ def prepare_output(
 def get_requests_to_process(
     current_states: List[RequestState],
     cache_manager: KVCacheManager,
+    regex_fsm_cache: FSMCache,
     tokenizer: TokenizerP,
 ) -> Tuple[List[RequestType], bool, int]:
     requests: List[RequestType] = []
@@ -313,11 +317,14 @@ def get_requests_to_process(
                 # TODO(masahi): How to account for token counts in EvalMultiQueryRequest in
                 # Prometheus metric?
             elif not state.is_prefilled:
-                # `JSONLogitsProcessor` needs to be created only once.
+                # Check if JSON mode is enabled
                 if state.sampling_params.json_schema is not None:
-                    state.sampling_params.logits_processor = JSONLogitsProcessor(
-                        state.sampling_params.json_schema, tokenizer._tokenizer
-                    )
+                    # Convert schema into json string
+                    json_schema = json.dumps(state.sampling_params.json_schema)
+                    # Build a regex (grammar) from json string
+                    json_regex = build_regex_from_schema(json_schema, whitespace_pattern=r"[ \n\t]?")
+                    # Query fsm cache for FSM object
+                    state.sampling_params.regex_fsm = regex_fsm_cache.query(json_regex)
 
                 if (
                     state.num_sequences == 1
@@ -402,6 +409,7 @@ def should_stop_by_length(
 class EngineBase:
     text_generator: TextGenerator
     tokenizer: TokenizerP
+    regex_fsm_cache: FSMCache
     model_artifact_config: ModelArtifactConfig
     max_context_length: int
     max_num_batched_tokens: int
@@ -427,6 +435,16 @@ class EngineBase:
             self.model_artifact_config.max_context_length
         ), "max_context_length must not be zero"
         self.max_context_length = self.model_artifact_config.max_context_length
+        assert (
+        self.model_artifact_config.model_artifact_path
+        ), "model artifact path need to be defined"
+        self.regex_fsm_cache = FSMCache(
+            Path(self.model_artifact_config.model_artifact_path, "model"),
+            {
+                "tokenizer_mode": "auto",
+                "trust_remote_code": False,
+            },
+        )
         self.max_num_batched_tokens = model_module.engine_config.max_num_batched_tokens
         self.max_num_seq = model_module.engine_config.max_num_seq
         self.max_num_seq_per_request = model_module.engine_config.max_num_seq_per_request
